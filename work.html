@@ -3,40 +3,39 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark">
     <title>Hub - Workspace</title>
     <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="work.css">
 </head>
-<body>
-
-    <nav class="tabs">
-        <a href="index.html" class="tab-btn">Clock & Schedule</a>
-        <a href="work.html" class="tab-btn active">Workspace</a>
-        <a href="storage.html" class="tab-btn">Storage</a>
-    </nav>
+<body class="workspace-page" data-page="work">
+    <header class="workspace-header">
+        <nav class="workspace-nav" aria-label="Primary navigation">
+            <a href="index.html" class="workspace-nav__link">Clock</a>
+            <a href="work.html" class="workspace-nav__link is-active" aria-current="page">Workspace</a>
+            <a href="storage.html" class="workspace-nav__link">Storage</a>
+        </nav>
+    </header>
 
     <main class="content">
-        <section class="tab-content active">
-            <textarea id="workspace-input" placeholder="Your live workspace scratchpad..."></textarea>
+        <section class="workspace-shell" aria-label="Project tracker">
+            <form class="task-entry" id="task-form" autocomplete="off">
+                <input
+                    id="task-input"
+                    class="task-input"
+                    type="text"
+                    maxlength="120"
+                    placeholder="Add a new project and press Enter"
+                    aria-label="Add a new project"
+                />
+            </form>
+
+            <ul class="task-list" id="task-list" aria-label="Current projects" aria-live="polite"></ul>
+            <p class="task-empty" id="task-empty">No projects yet.</p>
         </section>
     </main>
 
-    <script type="module">
-        import { initializeApp } from "https://gstatic.com";
-        import { getDatabase, ref, set, onValue } from "https://gstatic.com";
-
-        const firebaseConfig = { databaseURL: "https://firebaseio.com" };
-        const app = initializeApp(firebaseConfig);
-        const db = getDatabase(app);
-        const workspaceRef = ref(db, 'liveData/workspace');
-        const workspaceInput = document.getElementById('workspace-input');
-
-        onValue(workspaceRef, (snapshot) => { workspaceInput.value = snapshot.val() || ''; });
-
-        let timeout;
-        workspaceInput.addEventListener('input', () => {
-            clearTimeout(timeout);
-            timeout = setTimeout(() => { set(workspaceRef, workspaceInput.value); }, 500);
-        });
-    </script>
+    <script src="nav.js" defer></script>
+    <script src="work.js" defer></script>
 </body>
 </html>
