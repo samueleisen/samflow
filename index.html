@@ -41,9 +41,17 @@
             <div class="schedule-panel__header">
                 <div>
                     <p class="eyebrow">Daily timeline</p>
-                    <h2>06:00 to 24:00</h2>
+                    <h2>00:00 to 24:00</h2>
                 </div>
                 <p class="schedule-panel__hint">Drag the bottom edge of a block to resize it.</p>
+            </div>
+
+            <div class="day-switch-row" aria-label="Choose day">
+                <div class="day-switch-row__spacer" aria-hidden="true"></div>
+                <div class="day-switch-row__actions">
+                    <div class="day-switch" id="day-switch"></div>
+                    <button class="day-clear-btn" type="button" id="clear-day-schedules">Delete all in day</button>
+                </div>
             </div>
 
             <div class="timeline-shell">
@@ -55,6 +63,46 @@
             </div>
         </section>
     </main>
+
+    <div class="schedule-modal" id="schedule-modal" hidden>
+        <div class="schedule-modal__backdrop" data-close-modal></div>
+        <section class="schedule-modal__panel" role="dialog" aria-modal="true" aria-labelledby="schedule-modal-title">
+            <div class="schedule-modal__header">
+                <div>
+                    <p class="eyebrow" id="schedule-modal-kicker">New schedule</p>
+                    <h3 id="schedule-modal-title">Create block</h3>
+                </div>
+                <button class="schedule-modal__close" type="button" data-close-modal aria-label="Close editor">×</button>
+            </div>
+
+            <form class="schedule-form" id="schedule-form">
+                <label class="schedule-field">
+                    <span>Title</span>
+                    <input id="schedule-title" type="text" autocomplete="off" placeholder="Untitled block" />
+                </label>
+
+                <div class="schedule-form__row">
+                    <label class="schedule-field">
+                        <span>Start</span>
+                        <input id="schedule-start" type="time" step="900" />
+                    </label>
+
+                    <label class="schedule-field">
+                        <span>End</span>
+                        <input id="schedule-end" type="time" step="900" />
+                    </label>
+                </div>
+
+                <div class="schedule-modal__actions">
+                    <button class="schedule-action is-secondary" type="button" id="schedule-delete">Delete</button>
+                    <div class="schedule-modal__actions-right">
+                        <button class="schedule-action is-secondary" type="button" data-close-modal>Cancel</button>
+                        <button class="schedule-action is-primary" type="submit" id="schedule-save">Save</button>
+                    </div>
+                </div>
+            </form>
+        </section>
+    </div>
     <script src="script.js"></script>
 </body>
 </html>
