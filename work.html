@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hub - Workspace</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <nav class="tabs">
+        <a href="index.html" class="tab-btn">Clock & Schedule</a>
+        <a href="work.html" class="tab-btn active">Workspace</a>
+        <a href="storage.html" class="tab-btn">Storage</a>
+    </nav>
+
+    <main class="content">
+        <section class="tab-content active">
+            <textarea id="workspace-input" placeholder="Your live workspace scratchpad..."></textarea>
+        </section>
+    </main>
+
+    <script type="module">
+        import { initializeApp } from "https://gstatic.com";
+        import { getDatabase, ref, set, onValue } from "https://gstatic.com";
+
+        const firebaseConfig = { databaseURL: "https://firebaseio.com" };
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+        const workspaceRef = ref(db, 'liveData/workspace');
+        const workspaceInput = document.getElementById('workspace-input');
+
+        onValue(workspaceRef, (snapshot) => { workspaceInput.value = snapshot.val() || ''; });
+
+        let timeout;
+        workspaceInput.addEventListener('input', () => {
+            clearTimeout(timeout);
+            timeout = setTimeout(() => { set(workspaceRef, workspaceInput.value); }, 500);
+        });
+    </script>
+</body>
+</html>

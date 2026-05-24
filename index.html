@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hub - Time</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <main class="app-shell">
+        <section class="hero" aria-label="Clock landing panel">
+            <a class="clock-link" href="#schedule" aria-label="Open the daily schedule timeline">
+                <div class="clock" aria-hidden="true">
+                    <div class="num" style="--i:1;"><span>1</span></div>
+                    <div class="num" style="--i:2;"><span>2</span></div>
+                    <div class="num" style="--i:3;"><span>3</span></div>
+                    <div class="num" style="--i:4;"><span>4</span></div>
+                    <div class="num" style="--i:5;"><span>5</span></div>
+                    <div class="num" style="--i:6;"><span>6</span></div>
+                    <div class="num" style="--i:7;"><span>7</span></div>
+                    <div class="num" style="--i:8;"><span>8</span></div>
+                    <div class="num" style="--i:9;"><span>9</span></div>
+                    <div class="num" style="--i:10;"><span>10</span></div>
+                    <div class="num" style="--i:11;"><span>11</span></div>
+                    <div class="num" style="--i:12;"><span>12</span></div>
+
+                    <div class="hand hour" id="hour"></div>
+                    <div class="hand minute" id="min"></div>
+                    <div class="hand second" id="sec"></div>
+                    <div class="center-dot"></div>
+                </div>
+            </a>
+            <div class="hero-copy">
+                <p class="eyebrow">Clock first</p>
+                <h1>Tap the clock to open your schedule</h1>
+                <p>Fullscreen on mobile, lightweight on desktop, and ready for time-blocking.</p>
+            </div>
+        </section>
+
+        <section id="schedule" class="schedule-panel">
+            <div class="schedule-panel__header">
+                <div>
+                    <p class="eyebrow">Daily timeline</p>
+                    <h2>06:00 to 24:00</h2>
+                </div>
+                <p class="schedule-panel__hint">Drag the bottom edge of a block to resize it.</p>
+            </div>
+
+            <div class="timeline-shell">
+                <div class="timeline-labels" id="timeline-labels" aria-hidden="true"></div>
+                <div class="timeline-board" id="timeline-board">
+                    <div class="timeline-grid" aria-hidden="true"></div>
+                    <div class="timeline-events" id="timeline-events"></div>
+                </div>
+            </div>
+        </section>
+    </main>
+    <script src="script.js"></script>
+</body>
+</html>
