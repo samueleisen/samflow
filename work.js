@@ -16,13 +16,10 @@ const timeFormatter = new Intl.DateTimeFormat(undefined, {
 });
 
 const staleThresholdMs = 7 * 24 * 60 * 60 * 1000;
+const descriptionMaxHeightPx = 240;
 
 function nowStamp() {
 	return Date.now();
-}
-
-function formatStamp(timestamp) {
-	return timeFormatter.format(new Date(timestamp));
 }
 
 function formatRelativeTime(timestamp) {
@@ -149,6 +146,17 @@ function touchTask(task) {
 	}
 }
 
+function autosizeDescriptionField(field) {
+	if (!field) {
+		return;
+	}
+
+	field.style.height = "auto";
+	const nextHeight = Math.min(field.scrollHeight, descriptionMaxHeightPx);
+	field.style.height = `${nextHeight}px`;
+	field.style.overflowY = field.scrollHeight > descriptionMaxHeightPx ? "auto" : "hidden";
+}
+
 function updateTaskRow(task) {
 	const row = taskList.querySelector(`[data-task-id="${task.id}"]`);
 
@@ -183,6 +191,7 @@ function updateTaskRow(task) {
 	const descriptionField = row.querySelector(".task-description textarea");
 	if (descriptionField && document.activeElement !== descriptionField) {
 		descriptionField.value = task.description;
+		autosizeDescriptionField(descriptionField);
 	}
 }
 
@@ -229,8 +238,10 @@ function renderTasks() {
 		descriptionField.value = task.description;
 		descriptionField.placeholder = "Add a short description...";
 		descriptionField.setAttribute("aria-label", `Description for ${task.title}`);
+		autosizeDescriptionField(descriptionField);
 		descriptionField.addEventListener("input", () => {
 			task.description = descriptionField.value;
+			autosizeDescriptionField(descriptionField);
 			touchTask(task);
 			persistTasks();
 		});
@@ -243,30 +254,6 @@ function renderTasks() {
 
 	taskList.appendChild(fragment);
 	updateEmptyState();
-}
-
-function touchTask(task) {
-	if (!task) {
-		return;
-	}
-
-	task.lastSeen = nowStamp();
-}
-
-function touchAllTasks({ render = true, persist = true } = {}) {
-	const stamp = nowStamp();
-
-	for (const task of tasks) {
-		task.lastSeen = stamp;
-	}
-
-	if (render) {
-		renderTasks();
-	}
-
-	if (persist) {
-		persistTasks();
-	}
 }
 
 function addTask(title) {
@@ -288,7 +275,6 @@ function addTask(title) {
 	renderTasks();
 	persistTasks();
 	updateEmptyState();
-	return;
 }
 
 function cycleStatus(taskId) {
@@ -313,19 +299,6 @@ function toggleProjectPanel(taskId) {
 		touchTask(task);
 	}
 
-	renderTasks();
-	persistTasks();
-	updateEmptyState();
-}
-
-function markTaskSeen(taskId) {
-	const task = tasks.find((entry) => entry.id === taskId);
-
-	if (!task) {
-		return;
-	}
-
-	touchTask(task);
 	renderTasks();
 	persistTasks();
 	updateEmptyState();

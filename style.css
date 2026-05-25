@@ -52,6 +52,57 @@ a {
     padding: 0 var(--page-padding) var(--page-padding);
 }
 
+.page-nav-arrows {
+    position: fixed;
+    left: 0;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 clamp(0.6rem, 1.8vw, 1.5rem);
+    pointer-events: none;
+    z-index: 35;
+}
+
+.page-nav-arrow {
+    pointer-events: auto;
+    appearance: none;
+    border: 0;
+    width: 2.6rem;
+    height: 2.6rem;
+    border-radius: 999px;
+    background: rgba(8, 12, 18, 0.72);
+    color: var(--text-color);
+    font-size: 1.35rem;
+    line-height: 1;
+    cursor: pointer;
+    box-shadow:
+        0 0 0 1px rgba(255, 255, 255, 0.1) inset,
+        0 10px 26px rgba(0, 0, 0, 0.28);
+    backdrop-filter: blur(8px);
+    transition: transform 140ms ease, background-color 140ms ease, opacity 140ms ease;
+}
+
+.page-nav-arrow:disabled {
+    opacity: 0.3;
+    cursor: default;
+}
+
+@media (hover: hover) and (pointer: fine) {
+    .page-nav-arrow:not(:disabled):hover {
+        transform: scale(1.04);
+        background: rgba(10, 16, 24, 0.9);
+    }
+}
+
+@media (max-width: 919px) {
+    .page-nav-arrows {
+        display: none;
+    }
+}
+
 .app-shell {
     width: 100%;
 }
@@ -217,7 +268,7 @@ a {
 .schedule-modal {
     position: fixed;
     inset: 0;
-    z-index: 40;
+    z-index: 5000;
     display: grid;
     place-items: center;
     padding: var(--page-padding);
@@ -232,7 +283,7 @@ a {
 
 .schedule-modal__panel {
     position: relative;
-    z-index: 1;
+    z-index: 5001;
     width: min(100%, 520px);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 24px;

@@ -360,8 +360,8 @@ function commitEditor() {
     activeEditorItem.endTime = minutesToTime(endMinutes);
     activeEditorItem.isDraft = false;
 
+    closeEditor();
     renderTimeline();
-    openEditor(activeEditorItem, false);
 }
 
 function deleteEditorItem() {
