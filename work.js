@@ -399,7 +399,6 @@ taskList.addEventListener("click", (event) => {
 	toggleProjectPanel(taskId);
 });
 
-taskInput.focus();
 renderTasks();
 connectFirebaseSync();
 
