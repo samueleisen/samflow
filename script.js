@@ -268,51 +268,10 @@ function renderTimeline() {
                 <p class="event-card__title"></p>
                 <p class="event-card__time"></p>
             </div>
-            <button class="event-card__resize" type="button" aria-label="Resize ${item.title || "schedule block"}"></button>
         `;
 
         card.addEventListener("click", (event) => {
-            if (event.target.closest(".event-card__resize")) {
-                return;
-            }
             openEditor(item, false);
-        });
-
-        const resizeHandle = card.querySelector(".event-card__resize");
-        resizeHandle.addEventListener("pointerdown", (pointerEvent) => {
-            pointerEvent.preventDefault();
-            pointerEvent.stopPropagation();
-
-            const startPointerY = pointerEvent.clientY;
-            const initialEndMinutes = timeToMinutes(item.endTime);
-            const slotHeight = getSlotHeight();
-
-            card.classList.add("is-resizing");
-            document.body.classList.add("is-resizing");
-
-            resizeHandle.setPointerCapture(pointerEvent.pointerId);
-
-            const handleMove = (moveEvent) => {
-                const deltaMinutes = ((moveEvent.clientY - startPointerY) / slotHeight) * SLOT_MINUTES;
-                const nextEndMinutes = snapToSlot(clampToDay(initialEndMinutes + deltaMinutes));
-                const nextStartMinutes = timeToMinutes(item.startTime);
-                const clampedEnd = Math.max(nextStartMinutes + MIN_DURATION, nextEndMinutes);
-
-                item.endTime = minutesToTime(clampedEnd);
-                syncCard(card, item);
-            };
-
-            const handleFinish = () => {
-                card.classList.remove("is-resizing");
-                document.body.classList.remove("is-resizing");
-                resizeHandle.removeEventListener("pointermove", handleMove);
-                resizeHandle.removeEventListener("pointerup", handleFinish);
-                resizeHandle.removeEventListener("pointercancel", handleFinish);
-            };
-
-            resizeHandle.addEventListener("pointermove", handleMove);
-            resizeHandle.addEventListener("pointerup", handleFinish);
-            resizeHandle.addEventListener("pointercancel", handleFinish);
         });
 
         timelineEvents.appendChild(card);
@@ -466,9 +425,8 @@ timelineBoard.addEventListener("click", (event) => {
     }
 
     const card = event.target.closest(".event-card");
-    const resizeHandle = event.target.closest(".event-card__resize");
 
-    if (card || resizeHandle) {
+    if (card) {
         return;
     }
 

@@ -306,9 +306,9 @@
 				}
 
 				if (deltaX > 0) {
-					navigate(1);
-				} else {
 					navigate(-1);
+				} else {
+					navigate(1);
 				}
 			},
 			options,
