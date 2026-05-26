@@ -92,18 +92,6 @@ body.skill-page .content {
     background: rgba(10, 16, 24, 0.92);
 }
 
-.skill-toggle.skill-toggle--lock {
-    padding: 0.55rem 0.85rem;
-    font-size: 0.85rem;
-    font-weight: 700;
-}
-
-.skill-toggle.skill-toggle--lock[aria-pressed="true"] {
-    border-color: rgba(255, 204, 0, 0.55);
-    background: rgba(24, 18, 8, 0.88);
-    color: #ffcc00;
-}
-
 .skill-toggle.skill-toggle--delete[aria-pressed="true"] {
     border-color: rgba(255, 96, 96, 0.6);
     background: rgba(28, 8, 8, 0.9);
@@ -214,8 +202,37 @@ body.skill-page .content {
     }
 }
 
+.swipe-nav-status {
+    position: fixed;
+    top: max(0.45rem, env(safe-area-inset-top, 0px));
+    right: max(0.45rem, env(safe-area-inset-right, 0px));
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    z-index: 60;
+    pointer-events: none;
+    box-shadow:
+        0 0 0 1px rgba(0, 0, 0, 0.45),
+        0 0 6px rgba(0, 0, 0, 0.35);
+    transition: background-color 180ms ease, box-shadow 180ms ease;
+}
+
+.swipe-nav-status.is-unlocked {
+    background: #00cc66;
+    box-shadow:
+        0 0 0 1px rgba(0, 0, 0, 0.45),
+        0 0 8px rgba(0, 204, 102, 0.55);
+}
+
+.swipe-nav-status.is-locked {
+    background: #ff7070;
+    box-shadow:
+        0 0 0 1px rgba(0, 0, 0, 0.45),
+        0 0 8px rgba(255, 112, 112, 0.5);
+}
+
 @media (min-width: 920px) {
-    #swipe-lock-btn {
+    .swipe-nav-status {
         display: none;
     }
 }

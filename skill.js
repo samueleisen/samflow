@@ -25,6 +25,10 @@ const connectionArrowPadding = 2;
 const connectionStrokeWidth = 2;
 const connectionArrowWidth = 4;
 const connectionArrowHeight = 4;
+const minZoom = 0.25;
+const maxZoom = 2.5;
+const defaultZoom = 1;
+const wheelZoomIntensity = 0.0015;
 const nodeStates = ["none", "processing", "complete"];
 const connectionStateColors = {
 	none: "#ffffff",
@@ -90,6 +94,7 @@ let editMode = false;
 let deleteMode = false;
 let panX = 0;
 let panY = 0;
+let zoom = defaultZoom;
 let viewportBounds = viewportFrame.getBoundingClientRect();
 let firstSelectedNodeId = null;
 let lastNodesDigest = "";
@@ -98,6 +103,7 @@ let activePan = null;
 let pendingNodePointer = null;
 let activeNodeDrag = null;
 let activeResize = null;
+let activePinch = null;
 let latestNodesSource = null;
 let latestConnectionsSource = null;
 
@@ -172,17 +178,66 @@ function connectionDigest(connections) {
 }
 
 function clampPan(nextX, nextY) {
-	const minX = Math.min(0, viewportBounds.width - canvasSize);
-	const minY = Math.min(0, viewportBounds.height - canvasSize);
+	const scaledWidth = canvasSize * zoom;
+	const scaledHeight = canvasSize * zoom;
+
+	let minX;
+	let maxX;
+	let minY;
+	let maxY;
+
+	if (scaledWidth <= viewportBounds.width) {
+		const centeredX = (viewportBounds.width - scaledWidth) / 2;
+		minX = centeredX;
+		maxX = centeredX;
+	} else {
+		minX = viewportBounds.width - scaledWidth;
+		maxX = 0;
+	}
+
+	if (scaledHeight <= viewportBounds.height) {
+		const centeredY = (viewportBounds.height - scaledHeight) / 2;
+		minY = centeredY;
+		maxY = centeredY;
+	} else {
+		minY = viewportBounds.height - scaledHeight;
+		maxY = 0;
+	}
 
 	return {
-		x: clamp(nextX, minX, 0),
-		y: clamp(nextY, minY, 0),
+		x: clamp(nextX, minX, maxX),
+		y: clamp(nextY, minY, maxY),
 	};
 }
 
 function updateCanvasTransform() {
-	canvas.style.transform = `translate3d(${panX}px, ${panY}px, 0)`;
+	canvas.style.transform = `translate3d(${panX}px, ${panY}px, 0) scale(${zoom})`;
+}
+
+function setZoomAtViewportPoint(viewportX, viewportY, nextZoom) {
+	const clampedZoom = clamp(nextZoom, minZoom, maxZoom);
+	const canvasX = (viewportX - panX) / zoom;
+	const canvasY = (viewportY - panY) / zoom;
+
+	zoom = clampedZoom;
+	panX = viewportX - canvasX * zoom;
+	panY = viewportY - canvasY * zoom;
+
+	const clamped = clampPan(panX, panY);
+	panX = clamped.x;
+	panY = clamped.y;
+	updateCanvasTransform();
+}
+
+function centerCanvasView() {
+	const canvasCenter = canvasSize / 2;
+	panX = viewportBounds.width / 2 - canvasCenter * zoom;
+	panY = viewportBounds.height / 2 - canvasCenter * zoom;
+
+	const clamped = clampPan(panX, panY);
+	panX = clamped.x;
+	panY = clamped.y;
+	updateCanvasTransform();
 }
 
 function refreshViewportBounds() {
@@ -195,9 +250,25 @@ function refreshViewportBounds() {
 
 function getCanvasPoint(event) {
 	return {
-		x: clamp(event.clientX - viewportBounds.left - panX, 0, canvasSize),
-		y: clamp(event.clientY - viewportBounds.top - panY, 0, canvasSize),
+		x: clamp((event.clientX - viewportBounds.left - panX) / zoom, 0, canvasSize),
+		y: clamp((event.clientY - viewportBounds.top - panY) / zoom, 0, canvasSize),
 	};
+}
+
+function getTouchPairDistance(firstTouch, secondTouch) {
+	return Math.hypot(secondTouch.clientX - firstTouch.clientX, secondTouch.clientY - firstTouch.clientY);
+}
+
+function getTouchPairCenter(firstTouch, secondTouch) {
+	return {
+		x: (firstTouch.clientX + secondTouch.clientX) / 2,
+		y: (firstTouch.clientY + secondTouch.clientY) / 2,
+	};
+}
+
+function cancelActivePanForPinch() {
+	activePan = null;
+	pendingNodePointer = null;
 }
 
 function coerceNode(candidate, fallbackId) {
@@ -748,7 +819,7 @@ function finishPointerInteraction(event) {
 }
 
 viewportFrame.addEventListener("pointerdown", (event) => {
-	if (event.button !== 0 || canEditStructure() || canDelete()) {
+	if (activePinch || event.button !== 0 || canEditStructure() || canDelete()) {
 		return;
 	}
 
@@ -760,6 +831,10 @@ viewportFrame.addEventListener("pointerdown", (event) => {
 });
 
 viewportFrame.addEventListener("pointermove", (event) => {
+	if (activePinch) {
+		return;
+	}
+
 	if (
 		pendingNodePointer &&
 		pendingNodePointer.mode !== "delete" &&
@@ -837,6 +912,80 @@ viewportFrame.addEventListener("pointermove", (event) => {
 
 viewportFrame.addEventListener("pointerup", finishPointerInteraction);
 viewportFrame.addEventListener("pointercancel", finishPointerInteraction);
+
+viewportFrame.addEventListener(
+	"wheel",
+	(event) => {
+		if (!isDesktopLayout()) {
+			return;
+		}
+
+		event.preventDefault();
+		const viewportX = event.clientX - viewportBounds.left;
+		const viewportY = event.clientY - viewportBounds.top;
+		const zoomFactor = Math.exp(-event.deltaY * wheelZoomIntensity);
+		setZoomAtViewportPoint(viewportX, viewportY, zoom * zoomFactor);
+	},
+	{ passive: false },
+);
+
+viewportFrame.addEventListener(
+	"touchstart",
+	(event) => {
+		if (event.touches.length !== 2) {
+			return;
+		}
+
+		if (event.target.closest(".skill-controls, .page-nav-arrow")) {
+			return;
+		}
+
+		event.preventDefault();
+		cancelActivePanForPinch();
+
+		const firstTouch = event.touches[0];
+		const secondTouch = event.touches[1];
+
+		activePinch = {
+			startDistance: getTouchPairDistance(firstTouch, secondTouch),
+			startZoom: zoom,
+		};
+	},
+	{ passive: false },
+);
+
+viewportFrame.addEventListener(
+	"touchmove",
+	(event) => {
+		if (!activePinch || event.touches.length < 2) {
+			return;
+		}
+
+		event.preventDefault();
+
+		const firstTouch = event.touches[0];
+		const secondTouch = event.touches[1];
+		const distance = getTouchPairDistance(firstTouch, secondTouch);
+		const center = getTouchPairCenter(firstTouch, secondTouch);
+		const viewportX = center.x - viewportBounds.left;
+		const viewportY = center.y - viewportBounds.top;
+		const nextZoom = activePinch.startZoom * (distance / activePinch.startDistance);
+
+		setZoomAtViewportPoint(viewportX, viewportY, nextZoom);
+	},
+	{ passive: false },
+);
+
+function finishTouchZoom(event) {
+	if (event.touches.length >= 2) {
+		return;
+	}
+
+	activePinch = null;
+}
+
+viewportFrame.addEventListener("touchend", finishTouchZoom);
+viewportFrame.addEventListener("touchcancel", finishTouchZoom);
 
 viewportFrame.addEventListener("click", (event) => {
 	if (!canModifyStructure()) {
@@ -935,5 +1084,5 @@ onValue(connectionsRef, (snapshot) => {
 });
 
 refreshViewportBounds();
-updateCanvasTransform();
+centerCanvasView();
 setEditMode(false);

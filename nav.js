@@ -10,13 +10,18 @@
 	const body = document.body;
 	const pageKey = body?.dataset.page;
 	const desktopQuery = window.matchMedia("(min-width: 920px)");
+	const DOUBLE_TAP_MS = 320;
+	const DOUBLE_TAP_DISTANCE_PX = 24;
+	const TAP_MOVE_THRESHOLD_PX = 12;
 
 	if (!pageKey || !pageRoutes[pageKey]) {
 		return;
 	}
 
 	let gestureCleanup = null;
+	let skillTapCleanup = null;
 	let arrowRoot = null;
+	let swipeStatusDot = null;
 	let skillSwipeNavLocked = false;
 
 	function readSkillSwipeLock() {
@@ -43,43 +48,46 @@
 		return !skillSwipeNavLocked;
 	}
 
-	function updateSwipeLockButton() {
-		const swipeLockBtn = document.getElementById("swipe-lock-btn");
+	function toggleSkillSwipeLock() {
+		skillSwipeNavLocked = !skillSwipeNavLocked;
+		persistSkillSwipeLock(skillSwipeNavLocked);
+		updateSwipeStatusIndicator();
+		applyNavigationMode();
+	}
 
-		if (!swipeLockBtn) {
+	function updateSwipeStatusIndicator() {
+		if (!swipeStatusDot) {
 			return;
 		}
 
-		swipeLockBtn.hidden = desktopQuery.matches;
-		swipeLockBtn.setAttribute("aria-pressed", skillSwipeNavLocked ? "true" : "false");
-		swipeLockBtn.textContent = skillSwipeNavLocked ? "Swipe Nav: OFF" : "Swipe Nav: ON";
+		const swipeEnabled = !skillSwipeNavLocked;
+		swipeStatusDot.classList.toggle("is-unlocked", swipeEnabled);
+		swipeStatusDot.classList.toggle("is-locked", !swipeEnabled);
+		swipeStatusDot.setAttribute(
+			"aria-label",
+			swipeEnabled ? "Swipe navigation enabled" : "Swipe navigation blocked",
+		);
+		swipeStatusDot.title = swipeEnabled
+			? "Swipe between tabs enabled. Double-tap empty space to block."
+			: "Swipe between tabs blocked. Double-tap empty space to enable.";
 	}
 
-	function mountSwipeLockButton() {
-		const swipeLockBtn = document.getElementById("swipe-lock-btn");
+	function mountSwipeStatusIndicator() {
+		if (swipeStatusDot) {
+			swipeStatusDot.remove();
+			swipeStatusDot = null;
+		}
 
-		if (!swipeLockBtn) {
+		if (pageKey !== "skill" || desktopQuery.matches) {
 			return;
 		}
 
-		updateSwipeLockButton();
-		swipeLockBtn.addEventListener("click", () => {
-			skillSwipeNavLocked = !skillSwipeNavLocked;
-			persistSkillSwipeLock(skillSwipeNavLocked);
-			updateSwipeLockButton();
-			applyNavigationMode();
-		});
-	}
-
-	if (pageKey === "skill") {
-		skillSwipeNavLocked = readSkillSwipeLock();
-		mountSwipeLockButton();
-	}
-
-	function getNeighbor(delta) {
-		const currentIndex = pageOrder.indexOf(pageKey);
-		const nextKey = pageOrder[currentIndex + delta];
-		return nextKey || null;
+		swipeStatusDot = document.createElement("div");
+		swipeStatusDot.className = "swipe-nav-status";
+		swipeStatusDot.setAttribute("role", "status");
+		swipeStatusDot.setAttribute("aria-live", "polite");
+		body.appendChild(swipeStatusDot);
+		updateSwipeStatusIndicator();
 	}
 
 	function isEditableTarget(target) {
@@ -87,6 +95,122 @@
 			target instanceof Element &&
 			Boolean(target.closest("input, textarea, select, button, a, [contenteditable='true']"))
 		);
+	}
+
+	function isEmptySkillTapTarget(target) {
+		if (!(target instanceof Element)) {
+			return false;
+		}
+
+		if (isEditableTarget(target)) {
+			return false;
+		}
+
+		if (target.closest(".skill-node, .skill-connection, .page-nav-arrow, .swipe-nav-status")) {
+			return false;
+		}
+
+		return Boolean(target.closest("#viewport-frame, .skill-viewport, .skill-canvas, .skill-stage, .skill-shell"));
+	}
+
+	function mountSkillDoubleTapToggle() {
+		let lastTapTime = 0;
+		let lastTapX = 0;
+		let lastTapY = 0;
+		let touchStartX = 0;
+		let touchStartY = 0;
+		let touchMoved = false;
+		let trackingEmptyTouch = false;
+
+		const controller = new AbortController();
+		const options = { passive: true, signal: controller.signal };
+
+		body.addEventListener(
+			"touchstart",
+			(event) => {
+				trackingEmptyTouch = false;
+				touchMoved = false;
+
+				if (event.touches.length !== 1 || !isEmptySkillTapTarget(event.target)) {
+					return;
+				}
+
+				const touch = event.touches[0];
+				touchStartX = touch.clientX;
+				touchStartY = touch.clientY;
+				trackingEmptyTouch = true;
+			},
+			options,
+		);
+
+		body.addEventListener(
+			"touchmove",
+			(event) => {
+				if (!trackingEmptyTouch || event.touches.length !== 1 || touchMoved) {
+					return;
+				}
+
+				const touch = event.touches[0];
+				const deltaX = touch.clientX - touchStartX;
+				const deltaY = touch.clientY - touchStartY;
+
+				if (Math.hypot(deltaX, deltaY) > TAP_MOVE_THRESHOLD_PX) {
+					touchMoved = true;
+				}
+			},
+			options,
+		);
+
+		body.addEventListener(
+			"touchend",
+			(event) => {
+				if (!trackingEmptyTouch || event.changedTouches.length !== 1 || touchMoved) {
+					trackingEmptyTouch = false;
+					return;
+				}
+
+				if (!isEmptySkillTapTarget(event.target)) {
+					trackingEmptyTouch = false;
+					return;
+				}
+
+				const touch = event.changedTouches[0];
+				const now = Date.now();
+				const deltaX = touch.clientX - lastTapX;
+				const deltaY = touch.clientY - lastTapY;
+				const elapsed = now - lastTapTime;
+
+				trackingEmptyTouch = false;
+
+				if (elapsed < DOUBLE_TAP_MS && Math.hypot(deltaX, deltaY) < DOUBLE_TAP_DISTANCE_PX) {
+					lastTapTime = 0;
+					toggleSkillSwipeLock();
+					return;
+				}
+
+				lastTapTime = now;
+				lastTapX = touch.clientX;
+				lastTapY = touch.clientY;
+			},
+			options,
+		);
+
+		body.addEventListener(
+			"touchcancel",
+			() => {
+				trackingEmptyTouch = false;
+				touchMoved = false;
+			},
+			options,
+		);
+
+		return () => controller.abort();
+	}
+
+	function getNeighbor(delta) {
+		const currentIndex = pageOrder.indexOf(pageKey);
+		const nextKey = pageOrder[currentIndex + delta];
+		return nextKey || null;
 	}
 
 	function navigate(delta) {
@@ -199,23 +323,34 @@
 			gestureCleanup = null;
 		}
 
+		if (skillTapCleanup) {
+			skillTapCleanup();
+			skillTapCleanup = null;
+		}
+
 		if (arrowRoot) {
 			arrowRoot.remove();
 			arrowRoot = null;
 		}
 
-		if (pageKey === "skill") {
-			updateSwipeLockButton();
-		}
+		mountSwipeStatusIndicator();
 
 		if (desktopQuery.matches) {
 			mountDesktopArrows();
 			return;
 		}
 
+		if (pageKey === "skill") {
+			skillTapCleanup = mountSkillDoubleTapToggle();
+		}
+
 		if (shouldMountSwipeGesture()) {
 			gestureCleanup = mountSwipeGesture();
 		}
+	}
+
+	if (pageKey === "skill") {
+		skillSwipeNavLocked = readSkillSwipeLock();
 	}
 
 	applyNavigationMode();
