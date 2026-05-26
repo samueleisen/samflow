@@ -185,6 +185,28 @@ body.workspace-page {
 	box-shadow: none;
 }
 
+.task-delete {
+	appearance: none;
+	border: 0;
+	background: transparent;
+	color: #ff5c5c;
+	font: inherit;
+	font-size: 0.84rem;
+	letter-spacing: 0.03em;
+	text-transform: uppercase;
+	cursor: pointer;
+	padding: 0.55rem 0 0;
+	justify-self: start;
+	transition: color 140ms ease, transform 140ms ease;
+}
+
+.task-delete:hover,
+.task-delete:focus-visible {
+	color: #ff8787;
+	transform: translateX(0.08rem);
+	outline: none;
+}
+
 .task-empty {
 	margin: 0;
 	padding: 0.6rem 0 0;

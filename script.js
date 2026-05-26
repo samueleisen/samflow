@@ -1,3 +1,7 @@
+
+
+import { database, ref, set, onValue } from "./firebase-config.js";
+
 const DAY_START = 0 * 60;
 const DAY_END = 24 * 60;
 const SLOT_MINUTES = 15;
@@ -6,38 +10,24 @@ const MIN_DURATION = SLOT_MINUTES;
 
 const DAYS = ["M", "Tu", "W", "Th", "F", "Sa", "Su"];
 
-const weeklySchedules = {
-    M: [
-        { id: 1, title: "Coding", startTime: "08:00", endTime: "09:30", accent: "#4dd8ff" },
-        { id: 2, title: "Design review", startTime: "11:15", endTime: "12:00", accent: "#7cf6c0" },
-        { id: 3, title: "Deep work", startTime: "14:00", endTime: "16:30", accent: "#8ea6ff" },
-    ],
-    Tu: [
-        { id: 4, title: "Gym", startTime: "06:45", endTime: "07:30", accent: "#ffb86b" },
-        { id: 5, title: "Feature build", startTime: "09:00", endTime: "11:45", accent: "#4dd8ff" },
-    ],
-    W: [
-        { id: 6, title: "Research", startTime: "10:00", endTime: "12:15", accent: "#8ea6ff" },
-        { id: 7, title: "Planning", startTime: "19:00", endTime: "20:00", accent: "#ffb86b" },
-    ],
-    Th: [
-        { id: 8, title: "Call", startTime: "13:15", endTime: "14:00", accent: "#7cf6c0" },
-        { id: 9, title: "Writing", startTime: "20:15", endTime: "21:45", accent: "#4dd8ff" },
-    ],
-    F: [
-        { id: 10, title: "Weekly review", startTime: "16:00", endTime: "17:30", accent: "#8ea6ff" },
-    ],
-    Sa: [
-        { id: 11, title: "Side project", startTime: "09:45", endTime: "11:00", accent: "#4dd8ff" },
-    ],
-    Su: [
-        { id: 12, title: "Reset", startTime: "18:00", endTime: "19:00", accent: "#ffb86b" },
-    ],
+const defaultWeeklySchedules = {
+    M: [],
+    Tu: [],
+    W: [],
+    Th: [],
+    F: [],
+    Sa: [],
+    Su: [],
 };
+
+let weeklySchedules = cloneWeeklySchedules(defaultWeeklySchedules);
 
 let activeDay = DAYS[0];
 let activeEditorItem = null;
 let activeEditorDay = null;
+let lastWrittenDigest = "";
+
+const schedulesRef = ref(database, "workspace/schedules");
 
 const clockHands = {
     hour: document.getElementById("hour"),
@@ -62,6 +52,92 @@ const scheduleModalTitle = document.getElementById("schedule-modal-title");
 const cardById = new Map();
 
 document.documentElement.style.setProperty("--slots-per-day", String((DAY_END - DAY_START) / SLOT_MINUTES));
+
+function cloneWeeklySchedules(source) {
+    const clonedSchedules = {};
+
+    for (const day of DAYS) {
+        const dayItems = Array.isArray(source?.[day]) ? source[day] : [];
+        clonedSchedules[day] = dayItems.map((item) => ({ ...item }));
+    }
+
+    return clonedSchedules;
+}
+
+function normalizeDayItems(dayItems = []) {
+    return dayItems
+        .map((item) => ({
+            id: Number(item.id),
+            title: String(item.title ?? "").trim(),
+            startTime: String(item.startTime ?? "00:00"),
+            endTime: String(item.endTime ?? "00:00"),
+            accent: String(item.accent ?? "#4dd8ff"),
+            isDraft: Boolean(item.isDraft),
+        }))
+        .filter((item) => item.title && Number.isFinite(item.id));
+}
+
+function normalizeWeeklySchedules(source) {
+    const normalizedSchedules = {};
+
+    for (const day of DAYS) {
+        normalizedSchedules[day] = normalizeDayItems(source?.[day]);
+    }
+
+    return normalizedSchedules;
+}
+
+function exportSchedulesSnapshot() {
+    const snapshot = {};
+
+    for (const day of DAYS) {
+        snapshot[day] = getDayItems(day).map((item) => ({
+            id: item.id,
+            title: item.title,
+            startTime: item.startTime,
+            endTime: item.endTime,
+            accent: item.accent || "#4dd8ff",
+        }));
+    }
+
+    return snapshot;
+}
+
+function persistSchedules() {
+    const snapshot = exportSchedulesSnapshot();
+    lastWrittenDigest = JSON.stringify(snapshot);
+    set(schedulesRef, snapshot);
+}
+
+function connectSchedulesSync() {
+    onValue(schedulesRef, (snapshot) => {
+        const incoming = snapshot.val();
+
+        if (!incoming) {
+            if (!lastWrittenDigest) {
+                weeklySchedules = cloneWeeklySchedules(defaultWeeklySchedules);
+                persistSchedules();
+                renderTimeline();
+            }
+
+            return;
+        }
+
+        const normalized = normalizeWeeklySchedules(incoming);
+        const incomingDigest = JSON.stringify(normalized);
+
+        if (incomingDigest === lastWrittenDigest) {
+            return;
+        }
+
+        weeklySchedules = normalized;
+        activeEditorItem = null;
+        activeEditorDay = null;
+        scheduleModal.hidden = true;
+        delete scheduleModal.dataset.open;
+        renderTimeline();
+    });
+}
 
 function getDayItems(day = activeDay) {
     return weeklySchedules[day] || [];
@@ -316,6 +392,7 @@ function clearActiveDay() {
 
     weeklySchedules[activeDay] = [];
     renderTimeline();
+    persistSchedules();
 }
 
 function closeEditor({ discardDraft = false } = {}) {
@@ -362,6 +439,7 @@ function commitEditor() {
 
     closeEditor();
     renderTimeline();
+    persistSchedules();
 }
 
 function deleteEditorItem() {
@@ -372,6 +450,7 @@ function deleteEditorItem() {
     removeItemFromDay(activeEditorDay, activeEditorItem);
     closeEditor();
     renderTimeline();
+    persistSchedules();
 }
 
 function getClickedMinutes(boardEvent) {
@@ -433,3 +512,5 @@ renderTimeline();
 scheduleSaveButton.disabled = true;
 
 window.addEventListener("resize", refreshLayout, { passive: true });
+
+connectSchedulesSync();

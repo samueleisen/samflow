@@ -1,3 +1,5 @@
+import { database, ref, set, onValue } from "./firebase-config.js";
+
 const taskInput = document.getElementById("task-input");
 const taskForm = document.getElementById("task-form");
 const taskList = document.getElementById("task-list");
@@ -5,8 +7,9 @@ const taskEmpty = document.getElementById("task-empty");
 
 const tasks = [];
 let nextTaskId = 1;
-let remoteWriter = null;
 let openProjectId = null;
+const projectsRef = ref(database, "workspace/projects");
+let lastWrittenDigest = "";
 
 const timeFormatter = new Intl.DateTimeFormat(undefined, {
 	month: "2-digit",
@@ -66,7 +69,7 @@ function coerceTask(candidate, fallbackId) {
 		id: Number.isFinite(parsedId) ? parsedId : nextTaskId++,
 		title,
 		status: ["active", "hibernating", "archived"].includes(candidate.status) ? candidate.status : "active",
-		description: String(candidate.description ?? "").trim(),
+		description: String(candidate.description ?? ""),
 		lastSeen: Number.isFinite(Number(candidate.lastSeen)) ? Number(candidate.lastSeen) : nowStamp(),
 	};
 }
@@ -101,13 +104,28 @@ function exportSnapshot() {
 }
 
 function persistTasks() {
-	if (typeof remoteWriter === "function") {
-		remoteWriter(exportSnapshot());
-	}
+	const snapshot = exportSnapshot();
+	lastWrittenDigest = JSON.stringify(snapshot);
+	set(projectsRef, snapshot);
 }
 
-function setRemoteWriter(writer) {
-	remoteWriter = writer;
+function connectFirebaseSync() {
+	onValue(projectsRef, (snapshot) => {
+		const incoming = normalizeTasks(snapshot.val());
+		const incomingDigest = JSON.stringify(incoming.map((task) => ({
+			id: task.id,
+			title: task.title,
+			status: task.status,
+			description: task.description,
+			lastSeen: task.lastSeen,
+		})));
+
+		if (incomingDigest === lastWrittenDigest) {
+			return;
+		}
+
+		hydrateFromRemote(incoming);
+	});
 }
 
 function updateEmptyState() {
@@ -242,11 +260,22 @@ function renderTasks() {
 		descriptionField.addEventListener("input", () => {
 			task.description = descriptionField.value;
 			autosizeDescriptionField(descriptionField);
-			touchTask(task);
+			task.lastSeen = nowStamp();
+			updateTaskRow(task);
+		});
+		descriptionField.addEventListener("blur", () => {
+			task.lastSeen = nowStamp();
+			updateTaskRow(task);
 			persistTasks();
 		});
 
-		descriptionPanel.appendChild(descriptionField);
+		const deleteButton = document.createElement("button");
+		deleteButton.type = "button";
+		deleteButton.className = "task-delete";
+		deleteButton.textContent = "Delete project";
+		deleteButton.setAttribute("aria-label", `Delete ${task.title}`);
+
+		descriptionPanel.append(descriptionField, deleteButton);
 
 		row.append(statusButton, text, meta, descriptionPanel);
 		fragment.appendChild(row);
@@ -291,6 +320,24 @@ function cycleStatus(taskId) {
 	updateEmptyState();
 }
 
+function deleteTask(taskId) {
+	const taskIndex = tasks.findIndex((entry) => entry.id === taskId);
+
+	if (taskIndex < 0) {
+		return;
+	}
+
+	tasks.splice(taskIndex, 1);
+
+	if (openProjectId === taskId) {
+		openProjectId = null;
+	}
+
+	renderTasks();
+	persistTasks();
+	updateEmptyState();
+}
+
 function toggleProjectPanel(taskId) {
 	openProjectId = openProjectId === taskId ? null : taskId;
 	const task = tasks.find((entry) => entry.id === taskId);
@@ -308,6 +355,9 @@ function hydrateFromRemote(source) {
 	tasks.length = 0;
 	tasks.push(...normalizeTasks(source));
 	syncNextTaskId();
+	if (!tasks.some((task) => task.id === openProjectId)) {
+		openProjectId = null;
+	}
 	renderTasks();
 	updateEmptyState();
 }
@@ -337,6 +387,11 @@ taskList.addEventListener("click", (event) => {
 		return;
 	}
 
+	if (event.target.closest(".task-delete")) {
+		deleteTask(taskId);
+		return;
+	}
+
 	if (event.target.closest("textarea")) {
 		return;
 	}
@@ -346,6 +401,7 @@ taskList.addEventListener("click", (event) => {
 
 taskInput.focus();
 renderTasks();
+connectFirebaseSync();
 
 window.WorkTracker = {
 	addTask,
@@ -353,6 +409,7 @@ window.WorkTracker = {
 	exportSnapshot,
 	persistTasks,
 	cycleStatus,
+	deleteTask,
 	toggleProjectPanel,
-	setRemoteWriter,
+	connectFirebaseSync,
 };
