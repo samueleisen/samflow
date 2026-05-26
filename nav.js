@@ -1,147 +1,223 @@
 (function () {
-    const pageRoutes = {
-        index: "index.html",
-        work: "work.html",
-        storage: "storage.html",
-    };
+	const pageRoutes = {
+		index: "index.html",
+		work: "work.html",
+		skill: "skill.html",
+	};
 
-    const pageOrder = ["index", "work", "storage"];
-    const body = document.body;
-    const pageKey = body?.dataset.page;
-    const desktopQuery = window.matchMedia("(min-width: 920px)");
+	const pageOrder = ["index", "work", "skill"];
+	const swipeLockKey = "skillSwipeNavLocked";
+	const body = document.body;
+	const pageKey = body?.dataset.page;
+	const desktopQuery = window.matchMedia("(min-width: 920px)");
 
-    if (!pageKey || !pageRoutes[pageKey]) {
-        return;
-    }
+	if (!pageKey || !pageRoutes[pageKey]) {
+		return;
+	}
 
-    let gestureCleanup = null;
-    let arrowRoot = null;
+	let gestureCleanup = null;
+	let arrowRoot = null;
+	let skillSwipeNavLocked = false;
 
-    function getNeighbor(delta) {
-        const currentIndex = pageOrder.indexOf(pageKey);
-        const nextKey = pageOrder[currentIndex + delta];
-        return nextKey || null;
-    }
+	function readSkillSwipeLock() {
+		try {
+			return localStorage.getItem(swipeLockKey) === "true";
+		} catch {
+			return false;
+		}
+	}
 
-    function isEditableTarget(target) {
-        return target instanceof Element && Boolean(target.closest("input, textarea, select, button, a, [contenteditable='true']"));
-    }
+	function persistSkillSwipeLock(locked) {
+		try {
+			localStorage.setItem(swipeLockKey, locked ? "true" : "false");
+		} catch {
+			// Ignore storage failures; in-memory toggle still works this session.
+		}
+	}
 
-    function navigate(delta) {
-        const currentIndex = pageOrder.indexOf(pageKey);
-        const nextKey = pageOrder[currentIndex + delta];
+	function shouldMountSwipeGesture() {
+		if (pageKey !== "skill") {
+			return true;
+		}
 
-        if (!nextKey) {
-            return;
-        }
+		return !skillSwipeNavLocked;
+	}
 
-        window.location.href = pageRoutes[nextKey];
-    }
+	function updateSwipeLockButton() {
+		const swipeLockBtn = document.getElementById("swipe-lock-btn");
 
-    function mountDesktopArrows() {
-        if (arrowRoot) {
-            arrowRoot.remove();
-        }
+		if (!swipeLockBtn) {
+			return;
+		}
 
-        const leftTarget = getNeighbor(-1);
-        const rightTarget = getNeighbor(1);
+		swipeLockBtn.hidden = desktopQuery.matches;
+		swipeLockBtn.setAttribute("aria-pressed", skillSwipeNavLocked ? "true" : "false");
+		swipeLockBtn.textContent = skillSwipeNavLocked ? "Swipe Nav: OFF" : "Swipe Nav: ON";
+	}
 
-        const root = document.createElement("div");
-        root.className = "page-nav-arrows";
+	function mountSwipeLockButton() {
+		const swipeLockBtn = document.getElementById("swipe-lock-btn");
 
-        const leftButton = document.createElement("button");
-        leftButton.type = "button";
-        leftButton.className = "page-nav-arrow page-nav-arrow--left";
-        leftButton.textContent = "←";
-        leftButton.setAttribute("aria-label", "Go to previous page");
-        leftButton.disabled = !leftTarget;
-        leftButton.addEventListener("click", () => navigate(-1));
+		if (!swipeLockBtn) {
+			return;
+		}
 
-        const rightButton = document.createElement("button");
-        rightButton.type = "button";
-        rightButton.className = "page-nav-arrow page-nav-arrow--right";
-        rightButton.textContent = "→";
-        rightButton.setAttribute("aria-label", "Go to next page");
-        rightButton.disabled = !rightTarget;
-        rightButton.addEventListener("click", () => navigate(1));
+		updateSwipeLockButton();
+		swipeLockBtn.addEventListener("click", () => {
+			skillSwipeNavLocked = !skillSwipeNavLocked;
+			persistSkillSwipeLock(skillSwipeNavLocked);
+			updateSwipeLockButton();
+			applyNavigationMode();
+		});
+	}
 
-        root.append(leftButton, rightButton);
-        body.appendChild(root);
-        arrowRoot = root;
-    }
+	if (pageKey === "skill") {
+		skillSwipeNavLocked = readSkillSwipeLock();
+		mountSwipeLockButton();
+	}
 
-    function mountSwipeGesture() {
-        let startX = 0;
-        let startY = 0;
-        let startTime = 0;
-        let tracking = false;
+	function getNeighbor(delta) {
+		const currentIndex = pageOrder.indexOf(pageKey);
+		const nextKey = pageOrder[currentIndex + delta];
+		return nextKey || null;
+	}
 
-        const controller = new AbortController();
-        const options = { passive: true, signal: controller.signal };
+	function isEditableTarget(target) {
+		return (
+			target instanceof Element &&
+			Boolean(target.closest("input, textarea, select, button, a, [contenteditable='true']"))
+		);
+	}
 
-        body.addEventListener("touchstart", (event) => {
-            if (event.touches.length !== 1 || isEditableTarget(event.target)) {
-                tracking = false;
-                return;
-            }
+	function navigate(delta) {
+		const currentIndex = pageOrder.indexOf(pageKey);
+		const nextKey = pageOrder[currentIndex + delta];
 
-            const touch = event.touches[0];
-            startX = touch.clientX;
-            startY = touch.clientY;
-            startTime = Date.now();
-            tracking = true;
-        }, options);
+		if (!nextKey) {
+			return;
+		}
 
-        body.addEventListener("touchend", (event) => {
-            if (!tracking || event.changedTouches.length !== 1) {
-                tracking = false;
-                return;
-            }
+		window.location.href = pageRoutes[nextKey];
+	}
 
-            const touch = event.changedTouches[0];
-            const deltaX = touch.clientX - startX;
-            const deltaY = touch.clientY - startY;
-            const duration = Date.now() - startTime;
+	function mountDesktopArrows() {
+		if (arrowRoot) {
+			arrowRoot.remove();
+		}
 
-            tracking = false;
+		const leftTarget = getNeighbor(-1);
+		const rightTarget = getNeighbor(1);
 
-            if (duration > 500) {
-                return;
-            }
+		const root = document.createElement("div");
+		root.className = "page-nav-arrows";
 
-            if (Math.abs(deltaX) < 56 || Math.abs(deltaX) <= Math.abs(deltaY) * 1.35) {
-                return;
-            }
+		const leftButton = document.createElement("button");
+		leftButton.type = "button";
+		leftButton.className = "page-nav-arrow page-nav-arrow--left";
+		leftButton.textContent = "←";
+		leftButton.setAttribute("aria-label", "Go to previous page");
+		leftButton.disabled = !leftTarget;
+		leftButton.addEventListener("click", () => navigate(-1));
 
-            if (deltaX > 0) {
-                navigate(1);
-            } else {
-                navigate(-1);
-            }
-        }, options);
+		const rightButton = document.createElement("button");
+		rightButton.type = "button";
+		rightButton.className = "page-nav-arrow page-nav-arrow--right";
+		rightButton.textContent = "→";
+		rightButton.setAttribute("aria-label", "Go to next page");
+		rightButton.disabled = !rightTarget;
+		rightButton.addEventListener("click", () => navigate(1));
 
-        return () => controller.abort();
-    }
+		root.append(leftButton, rightButton);
+		body.appendChild(root);
+		arrowRoot = root;
+	}
 
-    function applyNavigationMode() {
-        if (gestureCleanup) {
-            gestureCleanup();
-            gestureCleanup = null;
-        }
+	function mountSwipeGesture() {
+		let startX = 0;
+		let startY = 0;
+		let startTime = 0;
+		let tracking = false;
 
-        if (arrowRoot) {
-            arrowRoot.remove();
-            arrowRoot = null;
-        }
+		const controller = new AbortController();
+		const options = { passive: true, signal: controller.signal };
 
-        if (desktopQuery.matches) {
-            mountDesktopArrows();
-            return;
-        }
+		body.addEventListener(
+			"touchstart",
+			(event) => {
+				if (event.touches.length !== 1 || isEditableTarget(event.target)) {
+					tracking = false;
+					return;
+				}
 
-        gestureCleanup = mountSwipeGesture();
-    }
+				const touch = event.touches[0];
+				startX = touch.clientX;
+				startY = touch.clientY;
+				startTime = Date.now();
+				tracking = true;
+			},
+			options,
+		);
 
-    applyNavigationMode();
-    desktopQuery.addEventListener("change", applyNavigationMode);
+		body.addEventListener(
+			"touchend",
+			(event) => {
+				if (!tracking || event.changedTouches.length !== 1) {
+					tracking = false;
+					return;
+				}
+
+				const touch = event.changedTouches[0];
+				const deltaX = touch.clientX - startX;
+				const deltaY = touch.clientY - startY;
+				const duration = Date.now() - startTime;
+
+				tracking = false;
+
+				if (duration > 500) {
+					return;
+				}
+
+				if (Math.abs(deltaX) < 56 || Math.abs(deltaX) <= Math.abs(deltaY) * 1.35) {
+					return;
+				}
+
+				if (deltaX > 0) {
+					navigate(1);
+				} else {
+					navigate(-1);
+				}
+			},
+			options,
+		);
+
+		return () => controller.abort();
+	}
+
+	function applyNavigationMode() {
+		if (gestureCleanup) {
+			gestureCleanup();
+			gestureCleanup = null;
+		}
+
+		if (arrowRoot) {
+			arrowRoot.remove();
+			arrowRoot = null;
+		}
+
+		if (pageKey === "skill") {
+			updateSwipeLockButton();
+		}
+
+		if (desktopQuery.matches) {
+			mountDesktopArrows();
+			return;
+		}
+
+		if (shouldMountSwipeGesture()) {
+			gestureCleanup = mountSwipeGesture();
+		}
+	}
+
+	applyNavigationMode();
+	desktopQuery.addEventListener("change", applyNavigationMode);
 })();

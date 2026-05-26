@@ -1,0 +1,313 @@
+:root {
+    --text-color: #f4f7fb;
+    --muted-color: rgba(244, 247, 251, 0.68);
+}
+
+body.skill-page {
+    overflow: hidden;
+    touch-action: none;
+}
+
+body.skill-page .content {
+    width: 100%;
+    max-width: none;
+    padding: 0;
+}
+
+.skill-shell {
+    min-height: 100svh;
+}
+
+.skill-stage {
+    min-height: 100svh;
+    padding: 0;
+}
+
+.skill-viewport {
+    position: relative;
+    width: 100%;
+    height: 100svh;
+    overflow: hidden;
+    background:
+        radial-gradient(circle at 20% 15%, rgba(77, 216, 255, 0.14), transparent 28%),
+        radial-gradient(circle at 85% 20%, rgba(255, 204, 0, 0.08), transparent 18%),
+        linear-gradient(180deg, #090d15 0%, #06080d 100%);
+    user-select: none;
+    cursor: grab;
+}
+
+.skill-viewport.is-editing {
+    cursor: crosshair;
+}
+
+.skill-viewport.is-editing .skill-node::before {
+    content: "";
+    position: absolute;
+    inset: -10px;
+    border-radius: 50%;
+    z-index: 0;
+}
+
+.skill-viewport.is-mobile .skill-node {
+    cursor: pointer;
+}
+
+.skill-viewport.is-mobile .skill-node__resize {
+    display: none;
+}
+
+.skill-controls {
+    position: absolute;
+    top: 1rem;
+    left: 1rem;
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    max-width: min(100% - 2rem, 42rem);
+    pointer-events: auto;
+}
+
+.skill-toggle {
+    appearance: none;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 999px;
+    background: rgba(8, 12, 18, 0.8);
+    color: var(--text-color);
+    padding: 0.75rem 1rem;
+    font: inherit;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    backdrop-filter: blur(10px);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
+    transition: transform 140ms ease, border-color 140ms ease, background-color 140ms ease;
+}
+
+.skill-toggle:hover,
+.skill-toggle:focus-visible {
+    outline: none;
+    transform: translateY(-1px);
+    border-color: rgba(77, 216, 255, 0.55);
+    background: rgba(10, 16, 24, 0.92);
+}
+
+.skill-toggle.skill-toggle--lock {
+    padding: 0.55rem 0.85rem;
+    font-size: 0.85rem;
+    font-weight: 700;
+}
+
+.skill-toggle.skill-toggle--lock[aria-pressed="true"] {
+    border-color: rgba(255, 204, 0, 0.55);
+    background: rgba(24, 18, 8, 0.88);
+    color: #ffcc00;
+}
+
+.skill-toggle.skill-toggle--delete[aria-pressed="true"] {
+    border-color: rgba(255, 96, 96, 0.6);
+    background: rgba(28, 8, 8, 0.9);
+    color: #ff7070;
+}
+
+.skill-viewport.is-delete-mode {
+    cursor: not-allowed;
+}
+
+.skill-viewport.is-delete-mode .skill-node.is-deletable {
+    cursor: pointer;
+    box-shadow: 0 0 0 2px rgba(255, 96, 96, 0.35);
+}
+
+.skill-viewport.is-delete-mode .skill-lines {
+    pointer-events: auto;
+}
+
+.skill-viewport.is-delete-mode .skill-connection.is-deletable {
+    pointer-events: stroke;
+    cursor: pointer;
+    stroke-width: 5;
+}
+
+.skill-controls__hint {
+    margin: 0;
+    color: var(--muted-color);
+    font-size: 0.9rem;
+    line-height: 1.45;
+    max-width: 30rem;
+    backdrop-filter: blur(8px);
+}
+
+.skill-canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 2000px;
+    height: 2000px;
+    transform-origin: 0 0;
+    background-image: radial-gradient(rgba(255, 255, 255, 0.14) 1px, transparent 1px);
+    background-size: 20px 20px;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+}
+
+.skill-lines {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+    pointer-events: none;
+}
+
+.skill-lines line {
+    stroke-linecap: round;
+}
+
+.page-nav-arrows {
+    position: fixed;
+    left: 0;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 clamp(0.6rem, 1.8vw, 1.5rem);
+    pointer-events: none;
+    z-index: 50;
+}
+
+.page-nav-arrow {
+    pointer-events: auto;
+    appearance: none;
+    border: 0;
+    width: 2.6rem;
+    height: 2.6rem;
+    border-radius: 999px;
+    background: rgba(8, 12, 18, 0.72);
+    color: var(--text-color);
+    font-size: 1.35rem;
+    line-height: 1;
+    cursor: pointer;
+    box-shadow:
+        0 0 0 1px rgba(255, 255, 255, 0.1) inset,
+        0 10px 26px rgba(0, 0, 0, 0.28);
+    backdrop-filter: blur(8px);
+    transition: transform 140ms ease, background-color 140ms ease, opacity 140ms ease;
+}
+
+.page-nav-arrow:disabled {
+    opacity: 0.3;
+    cursor: default;
+}
+
+@media (hover: hover) and (pointer: fine) {
+    .page-nav-arrow:not(:disabled):hover {
+        transform: scale(1.04);
+        background: rgba(10, 16, 24, 0.9);
+    }
+}
+
+@media (max-width: 919px) {
+    .page-nav-arrows {
+        display: none;
+    }
+}
+
+@media (min-width: 920px) {
+    #swipe-lock-btn {
+        display: none;
+    }
+}
+
+.skill-node-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+}
+
+.skill-node {
+    position: absolute;
+    border-radius: 50%;
+    background: transparent;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-weight: 700;
+    font-size: 14px;
+    user-select: none;
+    box-sizing: border-box;
+    padding: 10px;
+    cursor: pointer;
+    transition: box-shadow 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+    appearance: none;
+    outline: none;
+    overflow: visible;
+}
+
+.skill-node.is-selected {
+    box-shadow: 0 0 0 5px rgba(77, 216, 255, 0.16);
+    transform: scale(1.02);
+}
+
+.skill-node__label {
+    position: relative;
+    z-index: 1;
+    padding: 0 0.5rem;
+    line-height: 1.1;
+    pointer-events: none;
+}
+
+.skill-node__resize {
+    position: absolute;
+    z-index: 2;
+    right: -4px;
+    bottom: -4px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: currentColor;
+    border: 2px solid #05070a;
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.14);
+    cursor: nwse-resize;
+    pointer-events: auto;
+}
+
+.skill-node.state-none {
+    border: 2px solid #ffffff;
+    color: #ffffff;
+}
+
+.skill-node.state-processing {
+    border: 2px solid #ffcc00;
+    color: #ffcc00;
+    box-shadow: 0 0 12px #ffcc00;
+}
+
+.skill-node.state-complete {
+    border: 2px solid #00cc66;
+    color: #00cc66;
+    box-shadow: 0 0 12px #00cc66;
+}
+
+@media (max-width: 860px) {
+    .skill-controls {
+        left: 0.75rem;
+        right: 0.75rem;
+        flex-direction: column;
+        align-items: flex-start;
+        max-width: none;
+    }
+
+    .skill-controls__hint {
+        max-width: none;
+    }
+}
+
+@media (max-width: 700px) {
+    .skill-toggle {
+        width: 100%;
+    }
+}

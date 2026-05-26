@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark">
+    <title>Hub - skill tree</title>
+    <link rel="stylesheet" href="skill.css">
+</head>
+<body class="skill-page" data-page="skill">
+    <main class="content skill-shell">
+        <section class="skill-stage" aria-label="Skill tree editor">
+            <div id="viewport-frame" class="skill-viewport">
+                <div id="canvas-controls" class="skill-controls">
+                    <button id="toggle-edit-btn" class="skill-toggle" type="button">Edit Mode: OFF</button>
+                    <button id="toggle-delete-btn" class="skill-toggle skill-toggle--delete" type="button" hidden aria-pressed="false">Delete: OFF</button>
+                    <button id="swipe-lock-btn" class="skill-toggle skill-toggle--lock" type="button" aria-pressed="false">Swipe Nav: ON</button>
+                    <p class="skill-controls__hint">Drag to pan. Tap a skill to cycle its status.</p>
+                </div>
+
+                <div id="skill-canvas" class="skill-canvas">
+                    <svg id="skill-line-layer" class="skill-lines" aria-hidden="true">
+                        <defs></defs>
+                    </svg>
+                    <div id="skill-node-layer" class="skill-node-layer"></div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script type="module" src="skill.js"></script>
+    <script src="nav.js" defer></script>
+</body>
+</html>
