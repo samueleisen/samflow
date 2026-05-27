@@ -1,4 +1,5 @@
 import { database, ref, set, onValue, push, remove } from "./firebase-config.js";
+import { subscribeAuthState } from "./auth.js";
 
 const viewportFrame = document.getElementById("viewport-frame");
 const canvas = document.getElementById("skill-canvas");
@@ -36,8 +37,12 @@ const connectionStateColors = {
 	complete: "#00cc66",
 };
 
-const nodesRef = ref(database, "skillTree/nodes");
-const connectionsRef = ref(database, "skillTree/connections");
+let nodesRef = null;
+let connectionsRef = null;
+let nodesUnsubscribe = null;
+let connectionsUnsubscribe = null;
+let currentUserId = null;
+let currentAuthUser = null;
 
 const connectionLayer = document.createElementNS(svgNs, "g");
 connectionLayer.setAttribute("id", "skill-connection-layer");
@@ -116,7 +121,7 @@ function isDesktopLayout() {
 }
 
 function canEditStructure() {
-	return isDesktopLayout() && editMode;
+	return Boolean(currentAuthUser) && isDesktopLayout() && editMode;
 }
 
 function canModifyStructure() {
@@ -128,7 +133,7 @@ function canDelete() {
 }
 
 function canChangeStatus() {
-	return !isDesktopLayout() || !editMode;
+	return Boolean(currentAuthUser) && (!isDesktopLayout() || !editMode);
 }
 
 function nowStamp() {
@@ -565,11 +570,19 @@ function renderScene() {
 }
 
 function persistNode(node) {
-	set(ref(database, `skillTree/nodes/${node.id}`), node);
+	if (!nodesRef || !currentUserId) {
+		return;
+	}
+
+	set(ref(database, `users/${currentUserId}/skillTree/nodes/${node.id}`), node);
 }
 
 function deleteNode(nodeId) {
-	remove(ref(database, `skillTree/nodes/${nodeId}`));
+	if (!nodesRef || !currentUserId) {
+		return;
+	}
+
+	remove(ref(database, `users/${currentUserId}/skillTree/nodes/${nodeId}`));
 
 	for (const connection of normalizeConnections(latestConnectionsSource)) {
 		if (connection.from === nodeId || connection.to === nodeId) {
@@ -583,23 +596,33 @@ function deleteNode(nodeId) {
 }
 
 function deleteConnection(connectionId) {
-	remove(ref(database, `skillTree/connections/${connectionId}`));
+	if (!connectionsRef || !currentUserId) {
+		return;
+	}
+
+	remove(ref(database, `users/${currentUserId}/skillTree/connections/${connectionId}`));
 }
 
 function updateControlsUi() {
 	const desktop = isDesktopLayout();
+	const signedIn = Boolean(currentAuthUser);
 	viewportFrame.classList.toggle("is-desktop", desktop);
 	viewportFrame.classList.toggle("is-mobile", !desktop);
 	viewportFrame.classList.toggle("is-editing", canModifyStructure());
 	viewportFrame.classList.toggle("is-delete-mode", canDelete());
+	viewportFrame.classList.toggle("is-authenticated", signedIn);
 	toggleEditBtn.hidden = !desktop;
+	toggleEditBtn.disabled = !signedIn || !desktop;
 	toggleEditBtn.textContent = `Edit Mode: ${editMode ? "ON" : "OFF"}`;
 	toggleDeleteBtn.hidden = !canEditStructure();
+	toggleDeleteBtn.disabled = !signedIn || !canEditStructure();
 	toggleDeleteBtn.textContent = `Delete: ${deleteMode ? "ON" : "OFF"}`;
 	toggleDeleteBtn.setAttribute("aria-pressed", deleteMode ? "true" : "false");
 
 	if (controlsHint) {
-		if (!desktop) {
+		if (!signedIn) {
+			controlsHint.textContent = "Sign in with Google to load and edit your skill tree.";
+		} else if (!desktop) {
 			controlsHint.textContent = "Drag to pan. Tap a skill to cycle its status.";
 		} else if (deleteMode) {
 			controlsHint.textContent = "Delete mode is on. Click a skill or connection to remove it.";
@@ -614,6 +637,8 @@ function updateControlsUi() {
 
 function setEditMode(nextMode) {
 	if (!isDesktopLayout()) {
+		editMode = false;
+	} else if (!currentAuthUser) {
 		editMode = false;
 	} else {
 		editMode = nextMode;
@@ -747,6 +772,10 @@ function beginPan(event) {
 }
 
 function createNodeAtEvent(event) {
+	if (!nodesRef) {
+		return;
+	}
+
 	const point = getCanvasPoint(event);
 
 	if (findNodeAtCanvasPoint(point.x, point.y)) {
@@ -1052,35 +1081,99 @@ function handleLayoutChange() {
 desktopQuery.addEventListener("change", handleLayoutChange);
 window.addEventListener("resize", refreshViewportBounds);
 
-onValue(nodesRef, (snapshot) => {
-	const incoming = normalizeNodes(snapshot.val());
-	const digest = nodeDigest(incoming);
+function disconnectSkillSync() {
+	if (typeof nodesUnsubscribe === "function") {
+		nodesUnsubscribe();
+	}
 
-	latestNodesSource = incoming;
+	if (typeof connectionsUnsubscribe === "function") {
+		connectionsUnsubscribe();
+	}
 
-	if (digest === lastNodesDigest) {
+	nodesUnsubscribe = null;
+	connectionsUnsubscribe = null;
+	nodesRef = null;
+	connectionsRef = null;
+	currentUserId = null;
+	lastNodesDigest = "";
+	lastConnectionsDigest = "";
+}
+
+function resetSkillState() {
+	latestNodesSource = [];
+	latestConnectionsSource = [];
+	firstSelectedNodeId = null;
+	editMode = false;
+	deleteMode = false;
+	updateControlsUi();
+	renderScene();
+}
+
+function connectSkillSyncForUser(user) {
+	disconnectSkillSync();
+
+	if (!user) {
+		currentAuthUser = null;
+		resetSkillState();
 		return;
 	}
 
-	lastNodesDigest = digest;
-	if (firstSelectedNodeId && !incoming.some((node) => node.id === firstSelectedNodeId)) {
-		firstSelectedNodeId = null;
-	}
-	renderScene();
-});
+	currentAuthUser = user;
+	currentUserId = user.uid;
+	nodesRef = ref(database, `users/${user.uid}/skillTree/nodes`);
+	connectionsRef = ref(database, `users/${user.uid}/skillTree/connections`);
 
-onValue(connectionsRef, (snapshot) => {
-	const incoming = normalizeConnections(snapshot.val());
-	const digest = connectionDigest(incoming);
+	nodesUnsubscribe = onValue(nodesRef, (snapshot) => {
+		const incoming = normalizeNodes(snapshot.val());
+		const digest = nodeDigest(incoming);
 
-	latestConnectionsSource = incoming;
+		latestNodesSource = incoming;
 
-	if (digest === lastConnectionsDigest) {
+		if (digest === lastNodesDigest) {
+			return;
+		}
+
+		lastNodesDigest = digest;
+		if (firstSelectedNodeId && !incoming.some((node) => node.id === firstSelectedNodeId)) {
+			firstSelectedNodeId = null;
+		}
+		renderScene();
+	});
+
+	connectionsUnsubscribe = onValue(connectionsRef, (snapshot) => {
+		const incoming = normalizeConnections(snapshot.val());
+		const digest = connectionDigest(incoming);
+
+		latestConnectionsSource = incoming;
+
+		if (digest === lastConnectionsDigest) {
+			return;
+		}
+
+		lastConnectionsDigest = digest;
+		renderScene();
+	});
+
+	updateControlsUi();
+}
+
+subscribeAuthState((state) => {
+	if (!state.ready) {
 		return;
 	}
 
-	lastConnectionsDigest = digest;
-	renderScene();
+	if (!state.user) {
+		connectSkillSyncForUser(null);
+		return;
+	}
+
+	if (currentUserId === state.user.uid && nodesRef && connectionsRef) {
+		currentAuthUser = state.user;
+		updateControlsUi();
+		return;
+	}
+
+	connectSkillSyncForUser(state.user);
 });
 
 refreshViewportBounds();

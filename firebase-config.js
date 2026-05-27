@@ -1,20 +1,39 @@
 // firebase-config.js
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+import {
+  browserLocalPersistence,
+  getAuth,
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  setPersistence,
+  signInWithPopup,
+  signOut,
+} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 import { getDatabase, ref, set, onValue, push, remove } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
 
 const firebaseConfig = {
-  apiKey: "Ws4UNWEftn4qjhA5ef1KZD1wAkKKPw9rLShwQ2Cn", // Need to grab this from console
-  authDomain: "samflow-b7814.firebaseapp.com", // Automatically generated
-  databaseURL: "https://samflow-b7814-default-rtdb.asia-southeast1.firebasedatabase.app/", // Your URL!
-  projectId: "samflow-b7814", // Your Project ID
-  storageBucket: "samflow-b7814.firebasestorage.app", // Automatically generated
-  messagingSenderId: "3706516340", // Need to grab this from console
-  appId: "1:3706516340:web:def4fe3041ed74f1a1b221", // Need to grab this from console
+  apiKey: "AIzaSyB1Sl_kh1_8gijcyhP3-HfoTTzXBiFqUYc",
+  authDomain: "samflow-b7814.firebaseapp.com",
+  databaseURL: "https://samflow-b7814-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "samflow-b7814",
+  storageBucket: "samflow-b7814.firebasestorage.app",
+  messagingSenderId: "3706516340",
+  appId: "1:3706516340:web:def4fe3041ed74f1a1b221",
   measurementId: "G-2CZ8675M33"
 };
 
 // Initialize Firebase services
 const app = initializeApp(firebaseConfig);
 const database = getDatabase(app);
+const auth = getAuth(app);
+const googleProvider = new GoogleAuthProvider();
 
-export { database, ref, set, onValue, push, remove };
+googleProvider.setCustomParameters({
+  prompt: "select_account",
+});
+
+void setPersistence(auth, browserLocalPersistence).catch(() => {
+  // Keep the app usable even if persistence cannot be set in this browser session.
+});
+
+export { auth, database, googleProvider, ref, set, onValue, push, remove, onAuthStateChanged, signInWithPopup, signOut };

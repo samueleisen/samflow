@@ -1,6 +1,7 @@
 
 
 import { database, ref, set, onValue } from "./firebase-config.js";
+import { subscribeAuthState } from "./auth.js";
 
 const DAY_START = 0 * 60;
 const DAY_END = 24 * 60;
@@ -26,8 +27,9 @@ let activeDay = DAYS[0];
 let activeEditorItem = null;
 let activeEditorDay = null;
 let lastWrittenDigest = "";
-
-const schedulesRef = ref(database, "workspace/schedules");
+let schedulesRef = null;
+let schedulesUnsubscribe = null;
+let currentUserId = null;
 
 const clockHands = {
     hour: document.getElementById("hour"),
@@ -104,13 +106,25 @@ function exportSchedulesSnapshot() {
 }
 
 function persistSchedules() {
+    if (!schedulesRef) {
+        return;
+    }
+
     const snapshot = exportSchedulesSnapshot();
     lastWrittenDigest = JSON.stringify(snapshot);
     set(schedulesRef, snapshot);
 }
 
 function connectSchedulesSync() {
-    onValue(schedulesRef, (snapshot) => {
+    if (!schedulesRef) {
+        return;
+    }
+
+    if (typeof schedulesUnsubscribe === "function") {
+        schedulesUnsubscribe();
+    }
+
+    schedulesUnsubscribe = onValue(schedulesRef, (snapshot) => {
         const incoming = snapshot.val();
 
         if (!incoming) {
@@ -137,6 +151,40 @@ function connectSchedulesSync() {
         delete scheduleModal.dataset.open;
         renderTimeline();
     });
+}
+
+function disconnectSchedulesSync() {
+    if (typeof schedulesUnsubscribe === "function") {
+        schedulesUnsubscribe();
+    }
+
+    schedulesUnsubscribe = null;
+    schedulesRef = null;
+    currentUserId = null;
+    lastWrittenDigest = "";
+}
+
+function resetScheduleState() {
+    weeklySchedules = cloneWeeklySchedules(defaultWeeklySchedules);
+    activeEditorItem = null;
+    activeEditorDay = null;
+    scheduleModal.hidden = true;
+    delete scheduleModal.dataset.open;
+    renderTimeline();
+}
+
+function connectSchedulesForUser(user) {
+    disconnectSchedulesSync();
+
+    if (!user) {
+        resetScheduleState();
+        buildDaySwitch();
+        return;
+    }
+
+    currentUserId = user.uid;
+    schedulesRef = ref(database, `users/${user.uid}/workspace/schedules`);
+    connectSchedulesSync();
 }
 
 function getDayItems(day = activeDay) {
@@ -471,4 +519,19 @@ scheduleSaveButton.disabled = true;
 
 window.addEventListener("resize", refreshLayout, { passive: true });
 
-connectSchedulesSync();
+subscribeAuthState((state) => {
+    if (!state.ready) {
+        return;
+    }
+
+    if (!state.user) {
+        connectSchedulesForUser(null);
+        return;
+    }
+
+    if (currentUserId === state.user.uid && schedulesRef) {
+        return;
+    }
+
+    connectSchedulesForUser(state.user);
+});

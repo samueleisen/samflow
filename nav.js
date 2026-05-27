@@ -1,3 +1,6 @@
+
+import { signInWithGoogle, signOutUser, subscribeAuthError, subscribeAuthState } from "./auth.js";
+
 (function () {
 	const pageRoutes = {
 		index: "index.html",
@@ -23,6 +26,16 @@
 	let arrowRoot = null;
 	let swipeStatusDot = null;
 	let skillSwipeNavLocked = false;
+	let authRoot = null;
+	let authButton = null;
+	let authDetail = null;
+	let authError = null;
+	let authState = {
+		ready: false,
+		user: null,
+		errorMessage: "",
+	};
+	let authBusy = false;
 
 	function readSkillSwipeLock() {
 		try {
@@ -88,6 +101,100 @@
 		swipeStatusDot.setAttribute("aria-live", "polite");
 		body.appendChild(swipeStatusDot);
 		updateSwipeStatusIndicator();
+	}
+
+	function getAuthLabel() {
+		if (authState.errorMessage) {
+			return authState.errorMessage;
+		}
+
+		if (!authState.ready) {
+			return "Connecting to Google";
+		}
+
+		if (!authState.user) {
+			return "Sign in to sync your workspace";
+		}
+
+		return authState.user.displayName || authState.user.email || "Google account";
+	}
+
+	function updateAuthControls() {
+		if (!authRoot || !authButton || !authDetail) {
+			return;
+		}
+
+		authRoot.classList.toggle("is-authenticated", Boolean(authState.user));
+		authRoot.classList.toggle("is-loading", !authState.ready);
+		authButton.disabled = authBusy || !authState.ready;
+		authButton.textContent = authState.user ? "Sign out" : authState.ready ? "Sign in with Google" : "Connecting...";
+		authDetail.textContent = getAuthLabel();
+		authDetail.title = authState.errorMessage || getAuthLabel();
+		authButton.title = authState.user ? `Signed in as ${authState.user.uid}` : "Use Google sign-in to unlock sync.";
+		authRoot.title = authState.user ? `Signed in as ${authState.user.uid}` : "";
+	}
+
+	function mountAuthControls() {
+		if (authRoot) {
+			authRoot.remove();
+		}
+
+		authRoot = document.createElement("div");
+		authRoot.className = "auth-shell";
+
+		const panel = document.createElement("div");
+		panel.className = "auth-chip";
+
+		const copy = document.createElement("div");
+		copy.className = "auth-chip__copy";
+
+		const eyebrow = document.createElement("span");
+		eyebrow.className = "auth-chip__eyebrow";
+		eyebrow.textContent = "Google account";
+
+		authDetail = document.createElement("span");
+		authDetail.className = "auth-chip__detail";
+
+		copy.append(eyebrow, authDetail);
+
+		authButton = document.createElement("button");
+		authButton.type = "button";
+		authButton.className = "auth-chip__button";
+		authButton.addEventListener("click", async () => {
+			if (authBusy || !authState.ready) {
+				return;
+			}
+
+			authBusy = true;
+			updateAuthControls();
+
+			try {
+				if (authState.user) {
+					await signOutUser();
+				} else {
+					await signInWithGoogle();
+				}
+			} catch (error) {
+				window.alert(error?.message || "Unable to update Google sign-in right now.");
+			} finally {
+				authBusy = false;
+				updateAuthControls();
+			}
+		});
+
+		panel.append(copy, authButton);
+		authRoot.appendChild(panel);
+		body.appendChild(authRoot);
+
+		subscribeAuthState((state) => {
+			authState = state;
+			updateAuthControls();
+		});
+
+		subscribeAuthError((message) => {
+			authState.errorMessage = message;
+			updateAuthControls();
+		});
 	}
 
 	function isEditableTarget(target) {
@@ -353,6 +460,9 @@
 		skillSwipeNavLocked = readSkillSwipeLock();
 	}
 
+	if (pageKey === "index") {
+		mountAuthControls();
+	}
 	applyNavigationMode();
 	desktopQuery.addEventListener("change", applyNavigationMode);
 })();

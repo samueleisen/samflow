@@ -103,6 +103,104 @@ a {
     }
 }
 
+.auth-shell {
+    position: fixed;
+    top: max(0.75rem, env(safe-area-inset-top, 0px));
+    right: max(0.75rem, env(safe-area-inset-right, 0px));
+    z-index: 55;
+    max-width: min(92vw, 24rem);
+    pointer-events: none;
+}
+
+.auth-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.85rem;
+    padding: 0.7rem 0.85rem;
+    border-radius: 999px;
+    background: rgba(8, 12, 18, 0.78);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow:
+        0 0 0 1px rgba(255, 255, 255, 0.02) inset,
+        0 10px 26px rgba(0, 0, 0, 0.26);
+    backdrop-filter: blur(12px);
+    pointer-events: auto;
+}
+
+.auth-chip__copy {
+    display: grid;
+    gap: 0.12rem;
+    min-width: 0;
+}
+
+.auth-chip__eyebrow {
+    color: var(--accent-color);
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    font-size: 0.66rem;
+    font-weight: 700;
+}
+
+.auth-chip__detail {
+    color: var(--muted-color);
+    font-size: 0.8rem;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.auth-chip__button {
+    appearance: none;
+    border: 0;
+    border-radius: 999px;
+    background: var(--accent-color);
+    color: #071018;
+    font: inherit;
+    font-size: 0.82rem;
+    font-weight: 700;
+    padding: 0.72rem 0.95rem;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: transform 140ms ease, opacity 140ms ease, background-color 140ms ease;
+}
+
+.auth-chip__button:disabled {
+    opacity: 0.72;
+    cursor: default;
+}
+
+@media (hover: hover) and (pointer: fine) {
+    .auth-chip__button:not(:disabled):hover {
+        transform: translateY(-1px);
+        background: #77e2ff;
+    }
+}
+
+@media (max-width: 640px) {
+    .auth-shell {
+        position: static;
+        top: auto;
+        right: auto;
+        left: auto;
+        z-index: auto;
+        max-width: none;
+        width: 100%;
+        margin: 1rem auto 0;
+        padding: 0 0.75rem;
+        pointer-events: auto;
+    }
+
+    .auth-chip {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .auth-chip__detail {
+        max-width: 13rem;
+    }
+}
+
 .app-shell {
     width: 100%;
 }

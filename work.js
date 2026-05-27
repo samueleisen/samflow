@@ -1,4 +1,5 @@
 import { database, ref, set, onValue } from "./firebase-config.js";
+import { subscribeAuthState } from "./auth.js";
 
 const taskInput = document.getElementById("task-input");
 const taskForm = document.getElementById("task-form");
@@ -8,7 +9,9 @@ const taskEmpty = document.getElementById("task-empty");
 const tasks = [];
 let nextTaskId = 1;
 let openProjectId = null;
-const projectsRef = ref(database, "workspace/projects");
+let projectsRef = null;
+let projectsUnsubscribe = null;
+let currentUserId = null;
 let lastWrittenDigest = "";
 
 const timeFormatter = new Intl.DateTimeFormat(undefined, {
@@ -104,13 +107,25 @@ function exportSnapshot() {
 }
 
 function persistTasks() {
+	if (!projectsRef) {
+		return;
+	}
+
 	const snapshot = exportSnapshot();
 	lastWrittenDigest = JSON.stringify(snapshot);
 	set(projectsRef, snapshot);
 }
 
 function connectFirebaseSync() {
-	onValue(projectsRef, (snapshot) => {
+	if (!projectsRef) {
+		return;
+	}
+
+	if (typeof projectsUnsubscribe === "function") {
+		projectsUnsubscribe();
+	}
+
+	projectsUnsubscribe = onValue(projectsRef, (snapshot) => {
 		const incoming = normalizeTasks(snapshot.val());
 		const incomingDigest = JSON.stringify(incoming.map((task) => ({
 			id: task.id,
@@ -126,6 +141,38 @@ function connectFirebaseSync() {
 
 		hydrateFromRemote(incoming);
 	});
+}
+
+function disconnectFirebaseSync() {
+	if (typeof projectsUnsubscribe === "function") {
+		projectsUnsubscribe();
+	}
+
+	projectsUnsubscribe = null;
+	projectsRef = null;
+	currentUserId = null;
+	lastWrittenDigest = "";
+}
+
+function resetWorkspaceState() {
+	tasks.length = 0;
+	nextTaskId = 1;
+	openProjectId = null;
+	renderTasks();
+	updateEmptyState();
+}
+
+function connectWorkspaceForUser(user) {
+	disconnectFirebaseSync();
+
+	if (!user) {
+		resetWorkspaceState();
+		return;
+	}
+
+	currentUserId = user.uid;
+	projectsRef = ref(database, `users/${user.uid}/workspace/projects`);
+	connectFirebaseSync();
 }
 
 function updateEmptyState() {
@@ -400,7 +447,23 @@ taskList.addEventListener("click", (event) => {
 });
 
 renderTasks();
-connectFirebaseSync();
+
+subscribeAuthState((state) => {
+	if (!state.ready) {
+		return;
+	}
+
+	if (!state.user) {
+		connectWorkspaceForUser(null);
+		return;
+	}
+
+	if (currentUserId === state.user.uid && projectsRef) {
+		return;
+	}
+
+	connectWorkspaceForUser(state.user);
+});
 
 window.WorkTracker = {
 	addTask,
