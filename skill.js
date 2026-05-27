@@ -31,14 +31,14 @@ const connectionArrowWidth = 4;
 const connectionArrowHeight = 4;
 const minZoom = 0.25;
 const maxZoom = 2.5;
-const defaultZoom = 0.8;
+const defaultZoom = 0.5;
 const wheelZoomIntensity = 0.0015;
-const nodeStates = ["none", "processing", "complete"];
+const nodeStates = ["activated","deactivated"];
 const connectionStateColors = {
-	none: "#ffffff",
-	processing: "#ffcc00",
-	complete: "#00cc66",
+	activated: "#ffffff",
+	deactivated: "#888888"
 };
+// simply add the css and more array both const will do ?
 
 let nodesRef = null;
 let connectionsRef = null;
@@ -351,7 +351,7 @@ function coerceNode(candidate, fallbackId) {
 	const x = Number(candidate.x);
 	const y = Number(candidate.y);
 	const size = Number(candidate.size);
-	const state = nodeStates.includes(candidate.state) ? candidate.state : "none";
+	const state = nodeStates.includes(candidate.state) ? candidate.state : "deactivated";
 
 	return {
 		id: String(candidate.id ?? fallbackId),
@@ -548,7 +548,7 @@ function renderConnections(nodes, connections) {
 			continue;
 		}
 
-		const destinationState = nodeStates.includes(toNode.state) ? toNode.state : "none";
+		const destinationState = nodeStates.includes(toNode.state) ? toNode.state : "deactivated";
 		const strokeColor = connectionStateColors[destinationState];
 		const points = connectionLinePoints(fromNode, toNode);
 		const line = document.createElementNS(svgNs, "line");
@@ -941,7 +941,7 @@ function createNodeAtEvent(event) {
 		x: point.x,
 		y: point.y,
 		size: defaultNodeSize,
-		state: "none",
+		state: "deactivated",
 		createdAt: nowStamp(),
 	});
 	firstSelectedNodeId = null;

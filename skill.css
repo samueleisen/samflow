@@ -407,21 +407,16 @@ body.skill-page .content {
     pointer-events: auto;
 }
 
-.skill-node.state-none {
+/* node color setup */
+.skill-node.state-activated {
     border: 2px solid #ffffff;
     color: #ffffff;
+    box-shadow: 0 0 6px #ffffff;
 }
-
-.skill-node.state-processing {
-    border: 2px solid #ffcc00;
-    color: #ffcc00;
-    box-shadow: 0 0 12px #ffcc00;
-}
-
-.skill-node.state-complete {
-    border: 2px solid #00cc66;
-    color: #00cc66;
-    box-shadow: 0 0 12px #00cc66;
+.skill-node.state-deactivated {
+    border: 2px solid #888888;
+    color: #888888;
+    box-shadow: none;
 }
 
 @media (max-width: 860px) {
