@@ -9,13 +9,16 @@ const toggleEditBtn = document.getElementById("toggle-edit-btn");
 const toggleDeleteBtn = document.getElementById("toggle-delete-btn");
 const controlsHint = document.querySelector(".skill-controls__hint");
 
+// Font sizing for nodes is computed dynamically when nodes are rendered.
+// Removed the initial one-off sizing pass because nodes are created later.
+
 if (!viewportFrame || !canvas || !nodeLayer || !lineLayer || !toggleEditBtn || !toggleDeleteBtn) {
 	throw new Error("Skill tree page is missing required mount points.");
 }
 
 const desktopQuery = window.matchMedia("(min-width: 920px)");
 const svgNs = "http://www.w3.org/2000/svg";
-const canvasSize = 2000;
+const canvasSize = 4000;
 const defaultNodeSize = 90;
 const minNodeSize = 60;
 const maxNodeSize = 220;
@@ -102,6 +105,7 @@ let panY = 0;
 let zoom = defaultZoom;
 let viewportBounds = viewportFrame.getBoundingClientRect();
 let firstSelectedNodeId = null;
+let activeRenameNodeId = null;
 let lastNodesDigest = "";
 let lastConnectionsDigest = "";
 let activePan = null;
@@ -115,6 +119,41 @@ let latestConnectionsSource = null;
 const interactionState = {
 	consumeClick: false,
 };
+
+const renameDialog = document.createElement("div");
+renameDialog.className = "skill-rename-dialog";
+renameDialog.hidden = true;
+renameDialog.innerHTML = `
+	<div class="skill-rename-dialog__backdrop" data-rename-cancel></div>
+	<div class="skill-rename-dialog__panel" role="dialog" aria-modal="true" aria-labelledby="skill-rename-title">
+		<p class="skill-rename-dialog__kicker">Rename skill</p>
+		<h2 id="skill-rename-title" class="skill-rename-dialog__title">Update the node label</h2>
+		<form class="skill-rename-dialog__form" autocomplete="off">
+			<label class="skill-rename-dialog__label" for="skill-rename-input">Skill title</label>
+			<input id="skill-rename-input" class="skill-rename-dialog__input" type="text" maxlength="80" spellcheck="false" />
+			<div class="skill-rename-dialog__actions">
+				<button type="button" class="skill-rename-dialog__button skill-rename-dialog__button--ghost" data-rename-cancel>Cancel</button>
+				<button type="submit" class="skill-rename-dialog__button">Save</button>
+			</div>
+		</form>
+	</div>
+`;
+
+const renameForm = renameDialog.querySelector(".skill-rename-dialog__form");
+const renameInput = renameDialog.querySelector("#skill-rename-input");
+const renameCancelTargets = renameDialog.querySelectorAll("[data-rename-cancel]");
+viewportFrame.appendChild(renameDialog);
+
+renameDialog.addEventListener("click", (event) => {
+	if (event.target.closest("[data-rename-cancel]")) {
+		closeRenameDialog();
+		return;
+	}
+
+	if (event.target.closest(".skill-rename-dialog__panel")) {
+		event.stopPropagation();
+	}
+});
 
 function isDesktopLayout() {
 	return desktopQuery.matches;
@@ -151,6 +190,28 @@ function escapeHtml(value) {
 		.replaceAll(">", "&gt;")
 		.replaceAll('"', "&quot;")
 		.replaceAll("'", "&#39;");
+}
+
+function computeNodeFontSize(title, nodeSize) {
+    const length = String(title ?? "").trim().length;
+    
+    // 1. Calculate a dynamic base that grows with the node, but has a higher minimum cap
+    const base = Math.max(14, Math.round(nodeSize * 0.18)); 
+
+    // 2. Short Words (4 chars or less): Give them a scaling bonus instead of a limit
+    if (length <= 4) {
+        // Boosts the size for short words, maxing out at a clean 24px
+        return `${Math.min(Math.round(base * 1.3), 24)}px`;
+    }
+
+    // 3. Long Words: Reduce font size gradually as length increases. Floor at 6px.
+    const excess = Math.max(0, length - 4);
+    
+    // Dropping by 3.5% per character makes the drop noticeable immediately
+    const scale = Math.max(0.45, 1 - (excess * 0.005)); 
+    const size = Math.max(6, Math.round(base * scale));
+    
+    return `${size}px`;
 }
 
 function nodeDigest(nodes) {
@@ -370,6 +431,67 @@ function renderSelection() {
 	}
 }
 
+function closeRenameDialog() {
+	activeRenameNodeId = null;
+	renameDialog.hidden = true;
+	delete renameDialog.dataset.open;
+	interactionState.consumeClick = false;
+}
+
+function openRenameDialog(nodeId) {
+	if (!canModifyStructure()) {
+		return;
+	}
+
+	const node = normalizeNodes(latestNodesSource).find((entry) => entry.id === nodeId);
+
+	if (!node) {
+		return;
+	}
+
+	activeRenameNodeId = node.id;
+	renameInput.value = node.title;
+	renameDialog.hidden = false;
+	renameDialog.dataset.open = "true";
+	renameInput.focus();
+	renameInput.select();
+}
+
+function saveRenameDialog() {
+	if (!activeRenameNodeId) {
+		return;
+	}
+
+	const nextTitle = String(renameInput.value ?? "").trim();
+
+	if (!nextTitle) {
+		return;
+	}
+
+	const node = normalizeNodes(latestNodesSource).find((entry) => entry.id === activeRenameNodeId);
+
+	if (!node) {
+		closeRenameDialog();
+		return;
+	}
+
+	if (node.title === nextTitle) {
+		closeRenameDialog();
+		return;
+	}
+
+	const updated = {
+		...node,
+		title: nextTitle,
+		updatedAt: nowStamp(),
+	};
+
+	latestNodesSource = upsertNode(latestNodesSource, updated);
+	renderScene();
+	persistNode(updated);
+	closeRenameDialog();
+}
+
 function nodeOutlineRadius(node) {
 	return node.size / 2 + nodeBorderWidth;
 }
@@ -491,9 +613,25 @@ function renderNodes(nodes) {
 			${modifying ? '<span class="skill-node__resize" aria-hidden="true"></span>' : ""}
 		`;
 
+		// Apply computed font size based on title length and node size
+		const labelEl = node.querySelector('.skill-node__label');
+		if (labelEl) {
+			labelEl.style.fontSize = computeNodeFontSize(nodeData.title, nodeData.size);
+		}
+
 		if (deleting) {
 			node.classList.add("is-deletable");
 		}
+
+		node.addEventListener("contextmenu", (event) => {
+			if (!canModifyStructure()) {
+				return;
+			}
+
+			event.preventDefault();
+			event.stopPropagation();
+			openRenameDialog(nodeData.id);
+		});
 
 		node.addEventListener("pointerdown", (event) => {
 			if (!structureEditing || event.button !== 0) {
@@ -593,6 +731,10 @@ function deleteNode(nodeId) {
 	if (firstSelectedNodeId === nodeId) {
 		firstSelectedNodeId = null;
 	}
+
+	if (activeRenameNodeId === nodeId) {
+		closeRenameDialog();
+	}
 }
 
 function deleteConnection(connectionId) {
@@ -628,7 +770,7 @@ function updateControlsUi() {
 			controlsHint.textContent = "Delete mode is on. Click a skill or connection to remove it.";
 		} else if (editMode) {
 			controlsHint.textContent =
-				"Click empty space to add skills. Click two skills to connect. Drag to move, corner to resize. Double-click to change status.";
+				"Click empty space to add skills. Click two skills to connect. Drag to move, corner to resize. Right-click a skill to rename it. Double-click to change status.";
 		} else {
 			controlsHint.textContent = "Drag to pan. Click a skill to cycle its status. Turn on edit mode to add, move, connect, and resize.";
 		}
@@ -636,6 +778,8 @@ function updateControlsUi() {
 }
 
 function setEditMode(nextMode) {
+	closeRenameDialog();
+
 	if (!isDesktopLayout()) {
 		editMode = false;
 	} else if (!currentAuthUser) {
@@ -654,6 +798,8 @@ function setEditMode(nextMode) {
 }
 
 function setDeleteMode(nextMode) {
+	closeRenameDialog();
+
 	if (!canEditStructure()) {
 		deleteMode = false;
 	} else {
@@ -1021,6 +1167,10 @@ viewportFrame.addEventListener("click", (event) => {
 		return;
 	}
 
+	if (event.target.closest(".skill-rename-dialog")) {
+		return;
+	}
+
 	if (interactionState.consumeClick) {
 		interactionState.consumeClick = false;
 		return;
@@ -1057,6 +1207,11 @@ toggleDeleteBtn.addEventListener("click", () => {
 
 viewportFrame.addEventListener("keydown", (event) => {
 	if (event.key === "Escape") {
+		if (!renameDialog.hidden) {
+			closeRenameDialog();
+			return;
+		}
+
 		if (deleteMode) {
 			setDeleteMode(false);
 			return;
@@ -1067,8 +1222,28 @@ viewportFrame.addEventListener("keydown", (event) => {
 	}
 });
 
+renameForm.addEventListener("submit", (event) => {
+	event.preventDefault();
+	saveRenameDialog();
+});
+
+for (const cancelTarget of renameCancelTargets) {
+	cancelTarget.addEventListener("click", () => {
+		closeRenameDialog();
+	});
+}
+
+renameInput.addEventListener("keydown", (event) => {
+	if (event.key === "Escape") {
+		event.preventDefault();
+		event.stopPropagation();
+		closeRenameDialog();
+	}
+});
+
 function handleLayoutChange() {
 	if (!isDesktopLayout()) {
+		closeRenameDialog();
 		editMode = false;
 		deleteMode = false;
 		firstSelectedNodeId = null;
@@ -1103,6 +1278,7 @@ function resetSkillState() {
 	latestNodesSource = [];
 	latestConnectionsSource = [];
 	firstSelectedNodeId = null;
+	closeRenameDialog();
 	editMode = false;
 	deleteMode = false;
 	updateControlsUi();
