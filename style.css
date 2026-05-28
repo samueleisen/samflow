@@ -587,6 +587,7 @@ a {
 .timeline-grid {
     position: absolute;
     inset: 0;
+    z-index: 0;
     background-image:
         repeating-linear-gradient(
             to bottom,
@@ -605,9 +606,22 @@ a {
     pointer-events: none;
 }
 
+.timeline-now-marker {
+    position: absolute;
+    left: 0;
+    right: 0;
+    z-index: 56;
+    height: 2px;
+    background: rgba(255, 77, 77, 0.42);
+    box-shadow: 0 0 10px rgba(255, 77, 77, 0.45);
+    pointer-events: none;
+
+}
+
 .timeline-events {
     position: absolute;
     inset: 0;
+        z-index: 2;
 }
 
 .event-card {

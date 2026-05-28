@@ -10,6 +10,7 @@ const DEFAULT_DURATION = 30;
 const MIN_DURATION = SLOT_MINUTES;
 
 const DAYS = ["M", "Tu", "W", "Th", "F", "Sa", "Su"];
+const DAY_KEYS_BY_INDEX = ["Su", "M", "Tu", "W", "Th", "F", "Sa"];
 
 const defaultWeeklySchedules = {
     M: [],
@@ -23,7 +24,7 @@ const defaultWeeklySchedules = {
 
 let weeklySchedules = cloneWeeklySchedules(defaultWeeklySchedules);
 
-let activeDay = DAYS[0];
+let activeDay = DAY_KEYS_BY_INDEX[new Date().getDay()] || DAYS[0];
 let activeEditorItem = null;
 let activeEditorDay = null;
 let lastWrittenDigest = "";
@@ -40,6 +41,7 @@ const clockHands = {
 const timelineBoard = document.getElementById("timeline-board");
 const timelineLabels = document.getElementById("timeline-labels");
 const timelineEvents = document.getElementById("timeline-events");
+const currentTimeMarker = document.createElement("div");
 const daySwitch = document.getElementById("day-switch");
 const clearDaySchedulesButton = document.getElementById("clear-day-schedules");
 const scheduleModal = document.getElementById("schedule-modal");
@@ -52,6 +54,11 @@ const scheduleDeleteButton = document.getElementById("schedule-delete");
 const scheduleModalKicker = document.getElementById("schedule-modal-kicker");
 const scheduleModalTitle = document.getElementById("schedule-modal-title");
 const cardById = new Map();
+
+currentTimeMarker.id = "current-time-marker";
+currentTimeMarker.className = "timeline-now-marker";
+currentTimeMarker.setAttribute("aria-hidden", "true");
+timelineBoard.insertBefore(currentTimeMarker, timelineEvents);
 
 document.documentElement.style.setProperty("--slots-per-day", String((DAY_END - DAY_START) / SLOT_MINUTES));
 
@@ -225,6 +232,22 @@ function getSlotHeight() {
     return Number.isFinite(parsedValue) ? parsedValue : 18;
 }
 
+function syncCurrentTimeMarker() {
+    const todayKey = DAY_KEYS_BY_INDEX[new Date().getDay()] || DAYS[0];
+
+    if (activeDay !== todayKey) {
+        currentTimeMarker.hidden = true;
+        return;
+    }
+
+    const now = new Date();
+    const minutes = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60 + now.getMilliseconds() / 60000;
+    const top = ((minutes - DAY_START) / SLOT_MINUTES) * getSlotHeight();
+
+    currentTimeMarker.hidden = false;
+    currentTimeMarker.style.top = `${top}px`;
+}
+
 function updateClock() {
     const now = new Date();
     const seconds = now.getSeconds() + now.getMilliseconds() / 1000;
@@ -234,6 +257,7 @@ function updateClock() {
     clockHands.second.style.transform = `rotate(${seconds * 6}deg)`;
     clockHands.minute.style.transform = `rotate(${minutes * 6}deg)`;
     clockHands.hour.style.transform = `rotate(${hours * 30}deg)`;
+    syncCurrentTimeMarker();
 }
 
 function buildDaySwitch() {
@@ -306,6 +330,7 @@ function renderTimeline() {
     buildTimelineLabels();
     timelineEvents.innerHTML = "";
     cardById.clear();
+    syncCurrentTimeMarker();
 
     getDayItems().forEach((item) => {
         const card = document.createElement("article");
