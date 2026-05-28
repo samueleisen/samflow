@@ -105,6 +105,7 @@ let panY = 0;
 let zoom = defaultZoom;
 let viewportBounds = viewportFrame.getBoundingClientRect();
 let firstSelectedNodeId = null;
+let selectedNodes = [];
 let activeRenameNodeId = null;
 let lastNodesDigest = "";
 let lastConnectionsDigest = "";
@@ -115,6 +116,10 @@ let activeResize = null;
 let activePinch = null;
 let latestNodesSource = null;
 let latestConnectionsSource = null;
+let historyUndoStack = [];
+let historyRedoStack = [];
+
+const historyLimit = 100;
 
 const interactionState = {
 	consumeClick: false,
@@ -212,7 +217,107 @@ function computeNodeFontSize(title, nodeSize) {
     const size = Math.max(6, Math.round(base * scale));
     
     return `${size}px`;
+// undo redo
 }
+
+	function cloneNodes(nodes) {
+		return nodes.map((node) => ({ ...node }));
+	}
+
+	function cloneConnections(connections) {
+		return connections.map((connection) => ({ ...connection }));
+	}
+
+	function serializeNodes(nodes) {
+		const serialized = {};
+
+		for (const node of nodes) {
+			serialized[node.id] = { ...node };
+		}
+
+		return serialized;
+	}
+
+	function serializeConnections(connections) {
+		const serialized = {};
+
+		for (const connection of connections) {
+			serialized[connection.id] = { ...connection };
+		}
+
+		return serialized;
+	}
+
+	function captureTreeSnapshot() {
+		return {
+			nodes: cloneNodes(normalizeNodes(latestNodesSource)),
+			connections: cloneConnections(normalizeConnections(latestConnectionsSource)),
+		};
+	}
+
+	function pushHistorySnapshot(snapshot) {
+		historyUndoStack = [...historyUndoStack, snapshot].slice(-historyLimit);
+		historyRedoStack = [];
+	}
+
+	function resetHistory() {
+		historyUndoStack = [];
+		historyRedoStack = [];
+	}
+
+	function syncTreeSnapshot(snapshot) {
+		latestNodesSource = cloneNodes(snapshot.nodes);
+		latestConnectionsSource = cloneConnections(snapshot.connections);
+		lastNodesDigest = nodeDigest(latestNodesSource);
+		lastConnectionsDigest = connectionDigest(latestConnectionsSource);
+		firstSelectedNodeId = null;
+		clearSelectedNodes();
+		closeRenameDialog();
+		interactionState.consumeClick = false;
+		pendingNodePointer = null;
+		activeNodeDrag = null;
+		activeResize = null;
+		activePan = null;
+		activePinch = null;
+		renderScene();
+		updateControlsUi();
+
+		if (!nodesRef || !connectionsRef || !currentUserId) {
+			return;
+		}
+
+		set(nodesRef, serializeNodes(latestNodesSource));
+		set(connectionsRef, serializeConnections(latestConnectionsSource));
+	}
+
+	function undoTreeChange() {
+		if (historyUndoStack.length === 0) {
+			return;
+		}
+
+		const snapshot = historyUndoStack.pop();
+		historyRedoStack.push(captureTreeSnapshot());
+		syncTreeSnapshot(snapshot);
+	}
+
+	function redoTreeChange() {
+		if (historyRedoStack.length === 0) {
+			return;
+		}
+
+		const snapshot = historyRedoStack.pop();
+		historyUndoStack.push(captureTreeSnapshot());
+		syncTreeSnapshot(snapshot);
+	}
+
+	function isEditableShortcutTarget(target) {
+		return Boolean(
+			target &&
+			(typeof target.closest === "function"
+				? target.closest("input, textarea, select, [contenteditable='true']") || target.isContentEditable
+				: false),
+		);
+	}
 
 function nodeDigest(nodes) {
 	return JSON.stringify(
@@ -424,11 +529,42 @@ function nextNodeState(currentState) {
 	const nextIndex = index >= 0 ? (index + 1) % nodeStates.length : 0;
 	return nodeStates[nextIndex];
 }
-
+// multi selector
 function renderSelection() {
+	const selectedNodeIds = selectedNodes.length > 0 ? new Set(selectedNodes) : firstSelectedNodeId ? new Set([firstSelectedNodeId]) : null;
+
 	for (const child of nodeLayer.children) {
-		child.classList.toggle("is-selected", child.dataset.nodeId === firstSelectedNodeId);
+		child.classList.toggle("is-selected", Boolean(selectedNodeIds?.has(child.dataset.nodeId)));
 	}
+}
+
+function clearSelectedNodes() {
+	selectedNodes = [];
+}
+
+function toggleSelectedNode(nodeId) {
+	firstSelectedNodeId = null;
+
+	if (selectedNodes.includes(nodeId)) {
+		selectedNodes = selectedNodes.filter((selectedNodeId) => selectedNodeId !== nodeId);
+	} else {
+		selectedNodes = [...selectedNodes, nodeId];
+	}
+
+	renderSelection();
+}
+
+function isSelectedNode(nodeId) {
+	return selectedNodes.includes(nodeId);
+}
+
+function removeSelectedNode(nodeId) {
+	if (!selectedNodes.includes(nodeId)) {
+		return;
+	}
+
+	selectedNodes = selectedNodes.filter((selectedNodeId) => selectedNodeId !== nodeId);
+	renderSelection();
 }
 
 function closeRenameDialog() {
@@ -479,6 +615,8 @@ function saveRenameDialog() {
 		closeRenameDialog();
 		return;
 	}
+
+	pushHistorySnapshot(captureTreeSnapshot());
 
 	const updated = {
 		...node,
@@ -581,6 +719,8 @@ function cycleNodeStatus(nodeId) {
 		return;
 	}
 
+	pushHistorySnapshot(captureTreeSnapshot());
+
 	const updated = {
 		...node,
 		state: nextNodeState(node.state),
@@ -635,6 +775,13 @@ function renderNodes(nodes) {
 
 		node.addEventListener("pointerdown", (event) => {
 			if (!structureEditing || event.button !== 0) {
+				return;
+			}
+
+			if (event.shiftKey) {
+				event.stopPropagation();
+				toggleSelectedNode(nodeData.id);
+				interactionState.consumeClick = true;
 				return;
 			}
 
@@ -714,17 +861,25 @@ function persistNode(node) {
 
 	set(ref(database, `users/${currentUserId}/skillTree/nodes/${node.id}`), node);
 }
+// removal
+function removeConnectionFromLocalState(connectionId) {
+	latestConnectionsSource = normalizeConnections(latestConnectionsSource).filter(
+		(connection) => connection.id !== connectionId,
+	);
+	renderScene();
+}
 
 function deleteNode(nodeId) {
 	if (!nodesRef || !currentUserId) {
 		return;
 	}
 
+	pushHistorySnapshot(captureTreeSnapshot());
 	remove(ref(database, `users/${currentUserId}/skillTree/nodes/${nodeId}`));
 
 	for (const connection of normalizeConnections(latestConnectionsSource)) {
 		if (connection.from === nodeId || connection.to === nodeId) {
-			deleteConnection(connection.id);
+			deleteConnection(connection.id, true);
 		}
 	}
 
@@ -732,16 +887,23 @@ function deleteNode(nodeId) {
 		firstSelectedNodeId = null;
 	}
 
+	removeSelectedNode(nodeId);
+
 	if (activeRenameNodeId === nodeId) {
 		closeRenameDialog();
 	}
 }
 
-function deleteConnection(connectionId) {
+function deleteConnection(connectionId, skipHistory = false) {
 	if (!connectionsRef || !currentUserId) {
 		return;
 	}
 
+	if (!skipHistory) {
+		pushHistorySnapshot(captureTreeSnapshot());
+	}
+
+	removeConnectionFromLocalState(connectionId);
 	remove(ref(database, `users/${currentUserId}/skillTree/connections/${connectionId}`));
 }
 
@@ -770,7 +932,7 @@ function updateControlsUi() {
 			controlsHint.textContent = "Delete mode is on. Click a skill or connection to remove it.";
 		} else if (editMode) {
 			controlsHint.textContent =
-				"Click empty space to add skills. Click two skills to connect. Drag to move, corner to resize. Right-click a skill to rename it. Double-click to change status.";
+				"Shift-click skills to multi-select. Drag any selected skill to move the group. Click empty space to add skills. Click two skills to connect. Drag to move, corner to resize. Right-click a skill to rename it. Double-click to change status.";
 		} else {
 			controlsHint.textContent = "Drag to pan. Click a skill to cycle its status. Turn on edit mode to add, move, connect, and resize.";
 		}
@@ -790,6 +952,7 @@ function setEditMode(nextMode) {
 
 	if (!editMode) {
 		deleteMode = false;
+		clearSelectedNodes();
 	}
 
 	firstSelectedNodeId = null;
@@ -833,6 +996,7 @@ function handleNodeSelection(nodeId) {
 	);
 
 	if (!existing) {
+		pushHistorySnapshot(captureTreeSnapshot());
 		const connectionRef = push(connectionsRef);
 		set(connectionRef, {
 			id: connectionRef.key,
@@ -863,6 +1027,21 @@ function beginNodePointer(nodeId, event, mode) {
 		originX: node.x,
 		originY: node.y,
 		originSize: node.size,
+		selectedNodeIds: mode === "drag" && isSelectedNode(nodeId) ? [...selectedNodes] : null,
+		selectedNodeOrigins:
+			mode === "drag" && isSelectedNode(nodeId)
+				? new Map(
+					normalizeNodes(latestNodesSource).map((entry) => [
+						entry.id,
+						{
+							x: entry.x,
+							y: entry.y,
+							size: entry.size,
+						},
+					]),
+				)
+				: null,
+		historySnapshot: mode === "drag" || mode === "resize" ? captureTreeSnapshot() : null,
 	};
 	interactionState.consumeClick = false;
 }
@@ -884,6 +1063,7 @@ function promotePendingNodePointer(event) {
 			startY: pending.startY,
 			originSize: pending.originSize,
 			moved: false,
+			historySnapshot: pending.historySnapshot,
 		};
 		return;
 	}
@@ -896,6 +1076,11 @@ function promotePendingNodePointer(event) {
 		originX: pending.originX,
 		originY: pending.originY,
 		moved: false,
+		deltaX: 0,
+		deltaY: 0,
+		selectedNodeIds: pending.selectedNodeIds,
+		selectedNodeOrigins: pending.selectedNodeOrigins,
+		historySnapshot: pending.historySnapshot,
 	};
 }
 
@@ -934,6 +1119,8 @@ function createNodeAtEvent(event) {
 	if (!value) {
 		return;
 	}
+
+	pushHistorySnapshot(captureTreeSnapshot());
 	const nodeRef = push(nodesRef);
 	set(nodeRef, {
 		id: nodeRef.key,
@@ -963,15 +1150,36 @@ function finishPointerInteraction(event) {
 		interactionState.consumeClick = activePan.moved;
 		activePan = null;
 	}
-
+// multi
 	if (activeNodeDrag && activeNodeDrag.pointerId === event.pointerId) {
 		interactionState.consumeClick = activeNodeDrag.moved;
 		if (activeNodeDrag.moved) {
-			const node = normalizeNodes(latestNodesSource).find((entry) => entry.id === activeNodeDrag.nodeId);
+			if (activeNodeDrag.historySnapshot) {
+				pushHistorySnapshot(activeNodeDrag.historySnapshot);
+			}
 
-			if (node) {
+			const nodeIds = activeNodeDrag.selectedNodeIds ?? [activeNodeDrag.nodeId];
+			const originLookup =
+				activeNodeDrag.selectedNodeOrigins ??
+				new Map([[activeNodeDrag.nodeId, { x: activeNodeDrag.originX, y: activeNodeDrag.originY, size: defaultNodeSize }]]);
+			const deltaX = activeNodeDrag.deltaX ?? 0;
+			const deltaY = activeNodeDrag.deltaY ?? 0;
+			const finalNodes = normalizeNodes(latestNodesSource);
+
+			for (const nodeId of nodeIds) {
+				const node = finalNodes.find((entry) => entry.id === nodeId);
+				const origin = originLookup.get(nodeId);
+
+				if (!node || !origin) {
+					continue;
+				}
+
+				node.x = clamp(origin.x + deltaX, node.size / 2, canvasSize - node.size / 2);
+				node.y = clamp(origin.y + deltaY, node.size / 2, canvasSize - node.size / 2);
 				persistNode(node);
 			}
+
+			latestNodesSource = finalNodes;
 		}
 		activeNodeDrag = null;
 	}
@@ -979,6 +1187,10 @@ function finishPointerInteraction(event) {
 	if (activeResize && activeResize.pointerId === event.pointerId) {
 		interactionState.consumeClick = activeResize.moved;
 		if (activeResize.moved) {
+			if (activeResize.historySnapshot) {
+				pushHistorySnapshot(activeResize.historySnapshot);
+			}
+
 			const node = normalizeNodes(latestNodesSource).find((entry) => entry.id === activeResize.nodeId);
 
 			if (node) {
@@ -1044,19 +1256,30 @@ viewportFrame.addEventListener("pointermove", (event) => {
 			activeNodeDrag.moved = true;
 		}
 
+		activeNodeDrag.deltaX = deltaX;
+		activeNodeDrag.deltaY = deltaY;
+
 		if (!activeNodeDrag.moved) {
 			return;
 		}
+// multi
+		const nextNodes = normalizeNodes(latestNodesSource);
+		const nodeIds = activeNodeDrag.selectedNodeIds ?? [activeNodeDrag.nodeId];
+		const originLookup = activeNodeDrag.selectedNodeOrigins ?? new Map([[activeNodeDrag.nodeId, { x: activeNodeDrag.originX, y: activeNodeDrag.originY }]]);
 
-		const nextNode = normalizeNodes(latestNodesSource).find((entry) => entry.id === activeNodeDrag.nodeId);
+		for (const nodeId of nodeIds) {
+			const nextNode = nextNodes.find((entry) => entry.id === nodeId);
+			const origin = originLookup.get(nodeId);
 
-		if (!nextNode) {
-			return;
+			if (!nextNode || !origin) {
+				continue;
+			}
+
+			nextNode.x = clamp(origin.x + deltaX, nextNode.size / 2, canvasSize - nextNode.size / 2);
+			nextNode.y = clamp(origin.y + deltaY, nextNode.size / 2, canvasSize - nextNode.size / 2);
 		}
 
-		nextNode.x = clamp(activeNodeDrag.originX + deltaX, nextNode.size / 2, canvasSize - nextNode.size / 2);
-		nextNode.y = clamp(activeNodeDrag.originY + deltaY, nextNode.size / 2, canvasSize - nextNode.size / 2);
-		latestNodesSource = upsertNode(latestNodesSource, nextNode);
+		latestNodesSource = nextNodes;
 		renderScene();
 	}
 
@@ -1103,6 +1326,28 @@ viewportFrame.addEventListener(
 	},
 	{ passive: false },
 );
+
+window.addEventListener("keydown", (event) => {
+	if (!currentAuthUser || !isDesktopLayout() || !renameDialog.hidden || isEditableShortcutTarget(event.target)) {
+		return;
+	}
+
+	const key = event.key.toLowerCase();
+	const isUndo = (event.ctrlKey || event.metaKey) && key === "z" && !event.shiftKey;
+	const isRedo = (event.ctrlKey || event.metaKey) && (key === "y" || (key === "z" && event.shiftKey));
+
+	if (!isUndo && !isRedo) {
+		return;
+	}
+
+	event.preventDefault();
+
+	if (isUndo) {
+		undoTreeChange();
+	} else {
+		redoTreeChange();
+	}
+});
 
 viewportFrame.addEventListener(
 	"touchstart",
@@ -1246,6 +1491,7 @@ function handleLayoutChange() {
 		closeRenameDialog();
 		editMode = false;
 		deleteMode = false;
+		clearSelectedNodes();
 		firstSelectedNodeId = null;
 	}
 
@@ -1272,15 +1518,18 @@ function disconnectSkillSync() {
 	currentUserId = null;
 	lastNodesDigest = "";
 	lastConnectionsDigest = "";
+	resetHistory();
 }
 
 function resetSkillState() {
 	latestNodesSource = [];
 	latestConnectionsSource = [];
 	firstSelectedNodeId = null;
+	clearSelectedNodes();
 	closeRenameDialog();
 	editMode = false;
 	deleteMode = false;
+	resetHistory();
 	updateControlsUi();
 	renderScene();
 }

@@ -356,6 +356,7 @@ body.skill-page .content {
     position: absolute;
     inset: 0;
     z-index: 2;
+    pointer-events: none;
 }
 
 .skill-node {
@@ -377,6 +378,7 @@ body.skill-page .content {
     appearance: none;
     outline: none;
     overflow: visible;
+    pointer-events: auto;
 }
 
 .skill-node.is-selected {
