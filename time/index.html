@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hub - Time</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body data-page="index">
+    <main class="app-shell">
+        <section class="hero" aria-label="Clock landing panel">
+            <div class="clock" aria-hidden="true">
+                    <div class="num" style="--i:1;"><span>1</span></div>
+                    <div class="num" style="--i:2;"><span>2</span></div>
+                    <div class="num" style="--i:3;"><span>3</span></div>
+                    <div class="num" style="--i:4;"><span>4</span></div>
+                    <div class="num" style="--i:5;"><span>5</span></div>
+                    <div class="num" style="--i:6;"><span>6</span></div>
+                    <div class="num" style="--i:7;"><span>7</span></div>
+                    <div class="num" style="--i:8;"><span>8</span></div>
+                    <div class="num" style="--i:9;"><span>9</span></div>
+                    <div class="num" style="--i:10;"><span>10</span></div>
+                    <div class="num" style="--i:11;"><span>11</span></div>
+                    <div class="num" style="--i:12;"><span>12</span></div>
+
+                    <div class="hand hour" id="hour"></div>
+                    <div class="hand minute" id="min"></div>
+                    <div class="hand second" id="sec"></div>
+                    <div class="center-dot"></div>
+            </div>
+        </section>
+
+        <section id="schedule" class="schedule-panel">
+            <div class="schedule-panel__header">
+                <div>
+                    <p class="eyebrow">Daily timeline</p>
+                </div>
+            </div>
+
+            <div class="day-switch-row" aria-label="Choose day">
+                <div class="day-switch-row__spacer" aria-hidden="true"></div>
+                <div class="day-switch-row__actions">
+                    <div class="day-switch" id="day-switch"></div>
+                    <button class="day-clear-btn" type="button" id="clear-day-schedules">Delete all in day</button>
+                </div>
+            </div>
+
+            <div class="timeline-shell">
+                <div class="timeline-labels" id="timeline-labels" aria-hidden="true"></div>
+                <div class="timeline-board" id="timeline-board">
+                    <div class="timeline-grid" aria-hidden="true"></div>
+                    <div class="timeline-events" id="timeline-events"></div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <div class="schedule-modal" id="schedule-modal" hidden>
+        <div class="schedule-modal__backdrop" data-close-modal></div>
+        <section class="schedule-modal__panel" role="dialog" aria-modal="true" aria-labelledby="schedule-modal-title">
+            <div class="schedule-modal__header">
+                <div>
+                    <p class="eyebrow" id="schedule-modal-kicker">New schedule</p>
+                    <h3 id="schedule-modal-title">Create block</h3>
+                </div>
+                <button class="schedule-modal__close" type="button" data-close-modal aria-label="Close editor">×</button>
+            </div>
+
+            <form class="schedule-form" id="schedule-form">
+                <label class="schedule-field">
+                    <span>Title</span>
+                    <input id="schedule-title" type="text" autocomplete="off" placeholder="Untitled block" />
+                </label>
+
+                <div class="schedule-form__row">
+                    <label class="schedule-field">
+                        <span>Start</span>
+                        <input id="schedule-start" type="time" step="900" />
+                    </label>
+
+                    <label class="schedule-field">
+                        <span>End</span>
+                        <input id="schedule-end" type="time" step="900" />
+                    </label>
+                </div>
+
+                <div class="schedule-modal__actions">
+                    <button class="schedule-action is-secondary" type="button" id="schedule-delete">Delete</button>
+                    <div class="schedule-modal__actions-right">
+                        <button class="schedule-action is-secondary" type="button" data-close-modal>Cancel</button>
+                        <button class="schedule-action is-primary" type="submit" id="schedule-save">Save</button>
+                    </div>
+                </div>
+            </form>
+        </section>
+    </div>
+    <script type="module" src="/script.js"></script>
+    <script type="module" src="/nav.js"></script>
+</body>
+</html>

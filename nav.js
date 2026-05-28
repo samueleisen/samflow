@@ -3,19 +3,46 @@ import { signInWithGoogle, signOutUser, subscribeAuthError, subscribeAuthState }
 
 (function () {
 	const pageRoutes = {
-		index: "index.html",
-		work: "work.html",
-		skill: "skill.html",
+	index: "/",
+	work: "/work/",
+	time: "/time/",
 	};
 
-	const pageOrder = ["index", "work", "skill"];
+	const pageOrder = ["time", "index", "work"];
 	const swipeLockKey = "skillSwipeNavLocked";
 	const body = document.body;
-	const pageKey = body?.dataset.page;
+	const rawPageKey = body?.dataset.page;
+	const pagePath = window.location.pathname;
 	const desktopQuery = window.matchMedia("(min-width: 920px)");
 	const DOUBLE_TAP_MS = 320;
 	const DOUBLE_TAP_DISTANCE_PX = 24;
 	const TAP_MOVE_THRESHOLD_PX = 12;
+
+	function resolvePageKey(key, pathname) {
+		if (key === "skill") {
+			return "index";
+		}
+
+		if (pathname.startsWith("/work")) {
+			return "work";
+		}
+
+		if (pathname.startsWith("/time")) {
+			return "time";
+		}
+
+		if (key && pageRoutes[key]) {
+			return key;
+		}
+
+		if (pathname === "/" || pathname.endsWith("/index.html")) {
+			return "index";
+		}
+
+		return null;
+	}
+
+	const pageKey = resolvePageKey(rawPageKey, pagePath);
 
 	if (!pageKey || !pageRoutes[pageKey]) {
 		return;
@@ -29,7 +56,6 @@ import { signInWithGoogle, signOutUser, subscribeAuthError, subscribeAuthState }
 	let authRoot = null;
 	let authButton = null;
 	let authDetail = null;
-	let authError = null;
 	let authState = {
 		ready: false,
 		user: null,
@@ -54,7 +80,7 @@ import { signInWithGoogle, signOutUser, subscribeAuthError, subscribeAuthState }
 	}
 
 	function shouldMountSwipeGesture() {
-		if (pageKey !== "skill") {
+		if (pageKey !== "index") {
 			return true;
 		}
 
@@ -91,7 +117,7 @@ import { signInWithGoogle, signOutUser, subscribeAuthError, subscribeAuthState }
 			swipeStatusDot = null;
 		}
 
-		if (pageKey !== "skill" || desktopQuery.matches) {
+		if (pageKey !== "index" || desktopQuery.matches) {
 			return;
 		}
 
@@ -447,7 +473,7 @@ import { signInWithGoogle, signOutUser, subscribeAuthError, subscribeAuthState }
 			return;
 		}
 
-		if (pageKey === "skill") {
+		if (pageKey === "index") {
 			skillTapCleanup = mountSkillDoubleTapToggle();
 		}
 
@@ -456,11 +482,11 @@ import { signInWithGoogle, signOutUser, subscribeAuthError, subscribeAuthState }
 		}
 	}
 
-	if (pageKey === "skill") {
+	if (pageKey === "index") {
 		skillSwipeNavLocked = readSkillSwipeLock();
 	}
 
-	if (pageKey === "index") {
+	if (pageKey === "time") {
 		mountAuthControls();
 	}
 	applyNavigationMode();
