@@ -38,7 +38,34 @@ const connectionStateColors = {
 	activated: "#ffffff",
 	deactivated: "#888888"
 };
-// simply add the css and more array both const will do ?
+// for zoom simply add the css and more array both const will do 
+
+const guestDemoNodes = [
+	{
+		id: "-OtbNwVjOENV-rUCyGky",
+		title: "TECH",
+		x: 1997.3454831199738,
+		y: 1987.6359220973955,
+		size: 90,
+		state: "activated",
+	},
+	{
+		id: "-OtbqA8a_Y-9IibOCNOq",
+		title: "PRACTICE",
+		x: 2365.3454831199738,
+		y: 1987.6359220973955,
+		size: 90,
+		state: "deactivated",
+	},
+];
+
+const guestDemoConnections = [
+	{
+		id: "-OtbqS2SQJW8-7RLGckY",
+		from: "-OtbNwVjOENV-rUCyGky",
+		to: "-OtbqA8a_Y-9IibOCNOq",
+	},
+];
 
 let nodesRef = null;
 let connectionsRef = null;
@@ -165,7 +192,7 @@ function isDesktopLayout() {
 }
 
 function canEditStructure() {
-	return Boolean(currentAuthUser) && isDesktopLayout() && editMode;
+	return isDesktopLayout() && editMode;
 }
 
 function canModifyStructure() {
@@ -177,7 +204,15 @@ function canDelete() {
 }
 
 function canChangeStatus() {
-	return Boolean(currentAuthUser) && (!isDesktopLayout() || !editMode);
+	return !isDesktopLayout() || !editMode;
+}
+
+function hasRemoteTreeSync() {
+	return Boolean(nodesRef && connectionsRef && currentUserId);
+}
+
+function createLocalId(prefix) {
+	return `${prefix}-${nowStamp()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function nowStamp() {
@@ -524,6 +559,27 @@ function upsertNode(source, node) {
 	return nodes;
 }
 
+function upsertConnection(source, connection) {
+	const connections = normalizeConnections(source);
+	const existingIndex = connections.findIndex((entry) => entry.id === connection.id);
+
+	if (existingIndex >= 0) {
+		connections[existingIndex] = connection;
+		return connections;
+	}
+
+	connections.push(connection);
+	return connections;
+}
+
+function cloneGuestDemoNodes() {
+	return guestDemoNodes.map((node) => ({ ...node }));
+}
+
+function cloneGuestDemoConnections() {
+	return guestDemoConnections.map((connection) => ({ ...connection }));
+}
+
 function nextNodeState(currentState) {
 	const index = nodeStates.indexOf(currentState);
 	const nextIndex = index >= 0 ? (index + 1) % nodeStates.length : 0;
@@ -855,7 +911,7 @@ function renderScene() {
 }
 
 function persistNode(node) {
-	if (!nodesRef || !currentUserId) {
+	if (!hasRemoteTreeSync()) {
 		return;
 	}
 
@@ -870,6 +926,27 @@ function removeConnectionFromLocalState(connectionId) {
 }
 
 function deleteNode(nodeId) {
+	if (!hasRemoteTreeSync()) {
+		pushHistorySnapshot(captureTreeSnapshot());
+		latestNodesSource = normalizeNodes(latestNodesSource).filter((node) => node.id !== nodeId);
+		latestConnectionsSource = normalizeConnections(latestConnectionsSource).filter(
+			(connection) => connection.from !== nodeId && connection.to !== nodeId,
+		);
+
+		if (firstSelectedNodeId === nodeId) {
+			firstSelectedNodeId = null;
+		}
+
+		removeSelectedNode(nodeId);
+
+		if (activeRenameNodeId === nodeId) {
+			closeRenameDialog();
+		}
+
+		renderScene();
+		return;
+	}
+
 	if (!nodesRef || !currentUserId) {
 		return;
 	}
@@ -895,6 +972,15 @@ function deleteNode(nodeId) {
 }
 
 function deleteConnection(connectionId, skipHistory = false) {
+	if (!hasRemoteTreeSync()) {
+		if (!skipHistory) {
+			pushHistorySnapshot(captureTreeSnapshot());
+		}
+
+		removeConnectionFromLocalState(connectionId);
+		return;
+	}
+
 	if (!connectionsRef || !currentUserId) {
 		return;
 	}
@@ -916,16 +1002,18 @@ function updateControlsUi() {
 	viewportFrame.classList.toggle("is-delete-mode", canDelete());
 	viewportFrame.classList.toggle("is-authenticated", signedIn);
 	toggleEditBtn.hidden = !desktop;
-	toggleEditBtn.disabled = !signedIn || !desktop;
+	toggleEditBtn.disabled = !desktop;
 	toggleEditBtn.textContent = `Edit Mode: ${editMode ? "ON" : "OFF"}`;
 	toggleDeleteBtn.hidden = !canEditStructure();
-	toggleDeleteBtn.disabled = !signedIn || !canEditStructure();
+	toggleDeleteBtn.disabled = !canEditStructure();
 	toggleDeleteBtn.textContent = `Delete: ${deleteMode ? "ON" : "OFF"}`;
 	toggleDeleteBtn.setAttribute("aria-pressed", deleteMode ? "true" : "false");
 
 	if (controlsHint) {
 		if (!signedIn) {
-			controlsHint.textContent = "Sign in with Google to load and edit your skill tree.";
+			controlsHint.textContent = editMode
+				? "Guest sandbox is on. Your edits stay in this browser and will not sync to Firebase."
+				: "Guest sandbox is available. Turn on edit mode to change the tree locally, or sign in to sync.";
 		} else if (!desktop) {
 			controlsHint.textContent = "Drag to pan. Tap a skill to cycle its status.";
 		} else if (deleteMode) {
@@ -943,8 +1031,6 @@ function setEditMode(nextMode) {
 	closeRenameDialog();
 
 	if (!isDesktopLayout()) {
-		editMode = false;
-	} else if (!currentAuthUser) {
 		editMode = false;
 	} else {
 		editMode = nextMode;
@@ -997,13 +1083,24 @@ function handleNodeSelection(nodeId) {
 
 	if (!existing) {
 		pushHistorySnapshot(captureTreeSnapshot());
-		const connectionRef = push(connectionsRef);
-		set(connectionRef, {
-			id: connectionRef.key,
-			from: firstSelectedNodeId,
-			to: nodeId,
-			createdAt: nowStamp(),
-		});
+
+		if (hasRemoteTreeSync()) {
+			const connectionRef = push(connectionsRef);
+			set(connectionRef, {
+				id: connectionRef.key,
+				from: firstSelectedNodeId,
+				to: nodeId,
+				createdAt: nowStamp(),
+			});
+		} else {
+			latestConnectionsSource = upsertConnection(latestConnectionsSource, {
+				id: createLocalId("connection"),
+				from: firstSelectedNodeId,
+				to: nodeId,
+				createdAt: nowStamp(),
+			});
+			renderScene();
+		}
 	}
 
 	firstSelectedNodeId = null;
@@ -1103,10 +1200,6 @@ function beginPan(event) {
 }
 
 function createNodeAtEvent(event) {
-	if (!nodesRef) {
-		return;
-	}
-
 	const point = getCanvasPoint(event);
 
 	if (findNodeAtCanvasPoint(point.x, point.y)) {
@@ -1121,16 +1214,24 @@ function createNodeAtEvent(event) {
 	}
 
 	pushHistorySnapshot(captureTreeSnapshot());
-	const nodeRef = push(nodesRef);
-	set(nodeRef, {
-		id: nodeRef.key,
+	const node = {
+		id: hasRemoteTreeSync() ? null : createLocalId("node"),
 		title: value,
 		x: point.x,
 		y: point.y,
 		size: defaultNodeSize,
 		state: "deactivated",
 		createdAt: nowStamp(),
-	});
+	};
+
+	if (hasRemoteTreeSync()) {
+		const nodeRef = push(nodesRef);
+		node.id = nodeRef.key;
+		set(nodeRef, node);
+	} else {
+		latestNodesSource = upsertNode(latestNodesSource, node);
+		renderScene();
+	}
 	firstSelectedNodeId = null;
 }
 
@@ -1328,7 +1429,7 @@ viewportFrame.addEventListener(
 );
 
 window.addEventListener("keydown", (event) => {
-	if (!currentAuthUser || !isDesktopLayout() || !renameDialog.hidden || isEditableShortcutTarget(event.target)) {
+	if (!isDesktopLayout() || !renameDialog.hidden || isEditableShortcutTarget(event.target)) {
 		return;
 	}
 
@@ -1522,14 +1623,16 @@ function disconnectSkillSync() {
 }
 
 function resetSkillState() {
-	latestNodesSource = [];
-	latestConnectionsSource = [];
+	latestNodesSource = cloneGuestDemoNodes();
+	latestConnectionsSource = cloneGuestDemoConnections();
 	firstSelectedNodeId = null;
 	clearSelectedNodes();
 	closeRenameDialog();
 	editMode = false;
 	deleteMode = false;
 	resetHistory();
+	lastNodesDigest = nodeDigest(latestNodesSource);
+	lastConnectionsDigest = connectionDigest(latestConnectionsSource);
 	updateControlsUi();
 	renderScene();
 }
@@ -1540,6 +1643,8 @@ function connectSkillSyncForUser(user) {
 	if (!user) {
 		currentAuthUser = null;
 		resetSkillState();
+		updateControlsUi();
+		renderScene();
 		return;
 	}
 
