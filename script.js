@@ -3,8 +3,12 @@
 import { database, ref, set, onValue } from "./firebase-config.js";
 import { subscribeAuthState } from "./auth.js";
 
-const DAY_START = 0 * 60;
-const DAY_END = 24 * 60;
+const DAY_HARD_START = 0 * 60;
+const DAY_HARD_END = 24 * 60;
+
+// Dynamic visible window – recalculated before every render
+let DAY_START = DAY_HARD_START;
+let DAY_END = DAY_HARD_END;
 const SLOT_MINUTES = 15;
 const DEFAULT_DURATION = 30;
 const MIN_DURATION = SLOT_MINUTES;
@@ -60,7 +64,7 @@ currentTimeMarker.className = "timeline-now-marker";
 currentTimeMarker.setAttribute("aria-hidden", "true");
 timelineBoard.insertBefore(currentTimeMarker, timelineEvents);
 
-document.documentElement.style.setProperty("--slots-per-day", String((DAY_END - DAY_START) / SLOT_MINUTES));
+// --slots-per-day is set dynamically in updateDynamicRange()
 
 function cloneWeeklySchedules(source) {
     const clonedSchedules = {};
@@ -212,7 +216,7 @@ function timeToMinutes(timeString) {
 }
 
 function minutesToTime(totalMinutes) {
-    const safeMinutes = Math.max(0, Math.min(DAY_END, Math.round(totalMinutes)));
+    const safeMinutes = Math.max(0, Math.min(DAY_HARD_END, Math.round(totalMinutes)));
     const hours = String(Math.floor(safeMinutes / 60)).padStart(2, "0");
     const minutes = String(safeMinutes % 60).padStart(2, "0");
     return `${hours}:${minutes}`;
@@ -223,7 +227,42 @@ function snapToSlot(minutes) {
 }
 
 function clampToDay(minutes) {
-    return Math.max(DAY_START, Math.min(DAY_END, minutes));
+    return Math.max(DAY_HARD_START, Math.min(DAY_HARD_END, minutes));
+}
+
+/**
+ * Recomputes DAY_START / DAY_END based on the active day's items and
+ * pushes the derived CSS custom properties so the grid resizes.
+ */
+function updateDynamicRange() {
+    const items = getDayItems();
+    const PADDING_MINUTES = 30;
+
+    if (items.length === 0) {
+        // Empty day: show a compact 2-hour window around the current hour
+        const now = new Date();
+        const nowMinutes = now.getHours() * 60 + now.getMinutes();
+        const windowStart = Math.max(DAY_HARD_START, Math.floor((nowMinutes - 60) / 60) * 60);
+        const windowEnd = Math.min(DAY_HARD_END, windowStart + 120);
+        DAY_START = windowStart;
+        DAY_END = windowEnd;
+    } else {
+        const earliest = items.reduce((min, item) => Math.min(min, timeToMinutes(item.startTime)), Infinity);
+        const latest = items.reduce((max, item) => Math.max(max, timeToMinutes(item.endTime)), -Infinity);
+
+        // Snap outward to the nearest hour boundary with padding
+        DAY_START = Math.max(DAY_HARD_START, Math.floor((earliest - PADDING_MINUTES) / 60) * 60);
+        DAY_END = Math.min(DAY_HARD_END, Math.ceil((latest + PADDING_MINUTES) / 60) * 60);
+
+        // Guarantee at least 1-hour span
+        if (DAY_END - DAY_START < 60) {
+            DAY_END = Math.min(DAY_HARD_END, DAY_START + 60);
+        }
+    }
+
+    const slots = (DAY_END - DAY_START) / SLOT_MINUTES;
+    document.documentElement.style.setProperty("--slots-per-day", String(slots));
+    document.documentElement.style.setProperty("--day-view-start", String(DAY_START));
 }
 
 function getSlotHeight() {
@@ -327,6 +366,7 @@ function syncCard(card, item) {
 }
 
 function renderTimeline() {
+    updateDynamicRange();
     buildTimelineLabels();
     timelineEvents.innerHTML = "";
     cardById.clear();
@@ -354,6 +394,7 @@ function renderTimeline() {
 }
 
 function refreshLayout() {
+    updateDynamicRange();
     buildTimelineLabels();
     getDayItems().forEach((item) => {
         const card = cardById.get(item.id);

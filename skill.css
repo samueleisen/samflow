@@ -1,9 +1,11 @@
 @font-face {
-  font-family: 'MyCustomFont';
-  src: url('medievalsharp-regular-webfont.woff2') format('woff2'); /* Modern Browsers (Fast) */
-  font-weight: normal;
-  font-style: normal;
-  font-display: swap; /* Fixes visual lag by showing system text first */
+    font-family: 'MyCustomFont';
+    src: url('medievalsharp-regular-webfont.woff2') format('woff2');
+    /* Modern Browsers (Fast) */
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+    /* Fixes visual lag by showing system text first */
 }
 
 
@@ -415,6 +417,7 @@ body.skill-page .content {
     color: #ffffff;
     box-shadow: 0 0 6px #ffffff;
 }
+
 .skill-node.state-deactivated {
     border: 2px solid #888888;
     color: #888888;
@@ -435,4 +438,89 @@ body.skill-page .content {
     .skill-toggle {
         width: 100%;
     }
+}
+
+/* ── Node description popup ─────────────────────────────────────── */
+
+.skill-node-desc {
+    position: absolute;
+    z-index: 60;
+    left: 0;
+    right: 0;
+    bottom: 5px;
+    width: 100%;
+    max-width: 100%;
+    padding: 0.85rem 1.5rem 1rem;
+    border-radius: 0rem;
+    border: 1px solid rgba(255, 255, 255, 0.13);
+    background:
+        linear-gradient(160deg, rgba(14, 20, 34, 0.97), rgba(8, 11, 18, 0.97));
+    color: var(--text-color);
+    font-family: inherit;
+    font-size: 0.88rem;
+    line-height: 1.55;
+    pointer-events: none;
+    box-sizing: border-box;
+    box-shadow:
+        0 8px 32px rgba(0, 0, 0, 0.44),
+        0 0 0 1px rgba(77, 216, 255, 0.1) inset;
+    backdrop-filter: blur(14px);
+    word-break: break-word;
+    /* animation */
+    opacity: 0;
+    transform: translateY(12px);
+    transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.skill-node-desc.is-visible {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: none;
+}
+
+.skill-node-desc__title {
+    margin: 0 0 0.3rem;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: rgba(77, 216, 255, 0.82);
+}
+
+.skill-node-desc__body {
+    margin: 0;
+    white-space: pre-wrap;
+    color: rgba(244, 247, 251, 0.9);
+}
+
+/* ── Description field inside rename dialog ─────────────────────── */
+
+.skill-rename-dialog__label--desc {
+    margin-top: 0.2rem;
+}
+
+.skill-rename-dialog__textarea {
+    width: 100%;
+    box-sizing: border-box;
+    border-radius: 0.95rem;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-color);
+    padding: 0.85rem 0.95rem;
+    font: inherit;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    outline: none;
+    resize: vertical;
+    min-height: 5.5rem;
+    max-height: 14rem;
+}
+
+.skill-rename-dialog__textarea::placeholder {
+    color: rgba(244, 247, 251, 0.38);
+}
+
+.skill-rename-dialog__textarea:focus-visible {
+    border-color: rgba(77, 216, 255, 0.75);
+    box-shadow: 0 0 0 3px rgba(77, 216, 255, 0.16);
 }

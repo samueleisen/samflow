@@ -158,11 +158,13 @@ renameDialog.hidden = true;
 renameDialog.innerHTML = `
 	<div class="skill-rename-dialog__backdrop" data-rename-cancel></div>
 	<div class="skill-rename-dialog__panel" role="dialog" aria-modal="true" aria-labelledby="skill-rename-title">
-		<p class="skill-rename-dialog__kicker">Rename skill</p>
-		<h2 id="skill-rename-title" class="skill-rename-dialog__title">Update the node label</h2>
+		<p class="skill-rename-dialog__kicker">Edit skill</p>
+		<h2 id="skill-rename-title" class="skill-rename-dialog__title">Update the node</h2>
 		<form class="skill-rename-dialog__form" autocomplete="off">
 			<label class="skill-rename-dialog__label" for="skill-rename-input">Skill title</label>
 			<input id="skill-rename-input" class="skill-rename-dialog__input" type="text" maxlength="80" spellcheck="false" />
+			<label class="skill-rename-dialog__label skill-rename-dialog__label--desc" for="skill-desc-input">Description <span style="font-weight:400;opacity:0.55">(optional)</span></label>
+			<textarea id="skill-desc-input" class="skill-rename-dialog__textarea" maxlength="600" spellcheck="false" placeholder="Add a short note about this skill…"></textarea>
 			<div class="skill-rename-dialog__actions">
 				<button type="button" class="skill-rename-dialog__button skill-rename-dialog__button--ghost" data-rename-cancel>Cancel</button>
 				<button type="submit" class="skill-rename-dialog__button">Save</button>
@@ -173,8 +175,24 @@ renameDialog.innerHTML = `
 
 const renameForm = renameDialog.querySelector(".skill-rename-dialog__form");
 const renameInput = renameDialog.querySelector("#skill-rename-input");
+const renameDescInput = renameDialog.querySelector("#skill-desc-input");
 const renameCancelTargets = renameDialog.querySelectorAll("[data-rename-cancel]");
 viewportFrame.appendChild(renameDialog);
+
+// ── Description popup ──────────────────────────────────────────────
+const nodeDescPopup = document.createElement("div");
+nodeDescPopup.className = "skill-node-desc";
+nodeDescPopup.setAttribute("aria-live", "polite");
+nodeDescPopup.innerHTML = `<p class="skill-node-desc__title"></p><p class="skill-node-desc__body"></p>`;
+viewportFrame.appendChild(nodeDescPopup);
+
+const nodeDescTitle = nodeDescPopup.querySelector(".skill-node-desc__title");
+const nodeDescBody = nodeDescPopup.querySelector(".skill-node-desc__body");
+
+let activeDescNodeId = null;
+let descHideTimer = null;
+let descLongPressTimer = null;
+let descLongPressActive = false;
 
 renameDialog.addEventListener("click", (event) => {
 	if (event.target.closest("[data-rename-cancel]")) {
@@ -362,6 +380,7 @@ function nodeDigest(nodes) {
 			.map((node) => ({
 				id: node.id,
 				title: node.title,
+				description: node.description ?? "",
 				x: node.x,
 				y: node.y,
 				size: node.size,
@@ -493,9 +512,12 @@ function coerceNode(candidate, fallbackId) {
 	const size = Number(candidate.size);
 	const state = nodeStates.includes(candidate.state) ? candidate.state : "deactivated";
 
+	const description = String(candidate.description ?? "").trim();
+
 	return {
 		id: String(candidate.id ?? fallbackId),
 		title,
+		description,
 		x: Number.isFinite(x) ? x : canvasSize / 2,
 		y: Number.isFinite(y) ? y : canvasSize / 2,
 		size: Number.isFinite(size) ? clamp(size, minNodeSize, maxNodeSize) : defaultNodeSize,
@@ -643,6 +665,7 @@ function openRenameDialog(nodeId) {
 
 	activeRenameNodeId = node.id;
 	renameInput.value = node.title;
+	renameDescInput.value = node.description ?? "";
 	renameDialog.hidden = false;
 	renameDialog.dataset.open = "true";
 	renameInput.focus();
@@ -660,6 +683,8 @@ function saveRenameDialog() {
 		return;
 	}
 
+	const nextDescription = String(renameDescInput.value ?? "").trim();
+
 	const node = normalizeNodes(latestNodesSource).find((entry) => entry.id === activeRenameNodeId);
 
 	if (!node) {
@@ -667,7 +692,7 @@ function saveRenameDialog() {
 		return;
 	}
 
-	if (node.title === nextTitle) {
+	if (node.title === nextTitle && (node.description ?? "") === nextDescription) {
 		closeRenameDialog();
 		return;
 	}
@@ -677,6 +702,7 @@ function saveRenameDialog() {
 	const updated = {
 		...node,
 		title: nextTitle,
+		description: nextDescription,
 		updatedAt: nowStamp(),
 	};
 
@@ -788,10 +814,64 @@ function cycleNodeStatus(nodeId) {
 	persistNode(updated);
 }
 
+// ── Description popup helpers ─────────────────────────────────────
+
+function showNodeDesc(nodeId, anchorEl) {
+	const node = normalizeNodes(latestNodesSource).find((entry) => entry.id === nodeId);
+
+	if (!node || !(node.description ?? "").trim()) {
+		return;
+	}
+
+	// Clear any pending hide
+	if (descHideTimer) {
+		clearTimeout(descHideTimer);
+		descHideTimer = null;
+	}
+
+	activeDescNodeId = nodeId;
+	nodeDescTitle.textContent = node.title;
+	nodeDescBody.textContent = node.description;
+
+	// Pin to the bottom of the viewport, spanning full width
+	nodeDescPopup.style.left = "0";
+	nodeDescPopup.style.right = "0";
+	nodeDescPopup.style.bottom = "";
+	nodeDescPopup.style.top = "";
+	nodeDescPopup.style.width = "";
+	nodeDescPopup.style.maxWidth = "";
+
+	// Force reflow so transition fires
+	nodeDescPopup.classList.remove("is-visible");
+	// eslint-disable-next-line no-unused-expressions
+	void nodeDescPopup.offsetWidth;
+	nodeDescPopup.classList.add("is-visible");
+}
+
+function hideNodeDesc(immediate = false) {
+	if (descHideTimer) {
+		clearTimeout(descHideTimer);
+		descHideTimer = null;
+	}
+
+	if (immediate) {
+		activeDescNodeId = null;
+		nodeDescPopup.classList.remove("is-visible");
+		return;
+	}
+
+	descHideTimer = setTimeout(() => {
+		activeDescNodeId = null;
+		nodeDescPopup.classList.remove("is-visible");
+		descHideTimer = null;
+	}, 120);
+}
+
 function renderNodes(nodes) {
 	const structureEditing = canEditStructure();
 	const modifying = canModifyStructure();
 	const deleting = canDelete();
+	const isMobile = !isDesktopLayout();
 	nodeLayer.replaceChildren();
 
 	for (const nodeData of nodes) {
@@ -819,6 +899,49 @@ function renderNodes(nodes) {
 			node.classList.add("is-deletable");
 		}
 
+		// ── Description: desktop hover ───────────────────────────────
+		if (!isMobile) {
+			node.addEventListener("mouseenter", () => {
+				if ((nodeData.description ?? "").trim()) {
+					showNodeDesc(nodeData.id, node);
+				}
+			});
+
+			node.addEventListener("mouseleave", () => {
+				if (activeDescNodeId === nodeData.id) {
+					hideNodeDesc();
+				}
+			});
+		}
+
+		// ── Description: mobile long-press (500 ms) ──────────────────
+		if (isMobile) {
+			node.addEventListener("touchstart", (event) => {
+				if (!(nodeData.description ?? "").trim()) return;
+				descLongPressActive = false;
+				if (descLongPressTimer) clearTimeout(descLongPressTimer);
+				descLongPressTimer = setTimeout(() => {
+					descLongPressActive = true;
+					showNodeDesc(nodeData.id, node);
+				}, 500);
+			}, { passive: true });
+
+			node.addEventListener("touchend", () => {
+				if (descLongPressTimer) {
+					clearTimeout(descLongPressTimer);
+					descLongPressTimer = null;
+				}
+			}, { passive: true });
+
+			node.addEventListener("touchmove", () => {
+				// Cancel long press if finger moves
+				if (descLongPressTimer) {
+					clearTimeout(descLongPressTimer);
+					descLongPressTimer = null;
+				}
+			}, { passive: true });
+		}
+
 		node.addEventListener("contextmenu", (event) => {
 			if (!canModifyStructure()) {
 				return;
@@ -826,6 +949,7 @@ function renderNodes(nodes) {
 
 			event.preventDefault();
 			event.stopPropagation();
+			hideNodeDesc(true);
 			openRenameDialog(nodeData.id);
 		});
 
@@ -1213,10 +1337,14 @@ function createNodeAtEvent(event) {
 		return;
 	}
 
+	const descPrompt = window.prompt("Description (optional — leave blank to skip):");
+	const description = String(descPrompt ?? "").trim();
+
 	pushHistorySnapshot(captureTreeSnapshot());
 	const node = {
 		id: hasRemoteTreeSync() ? null : createLocalId("node"),
 		title: value,
+		description,
 		x: point.x,
 		y: point.y,
 		size: defaultNodeSize,
@@ -1429,6 +1557,13 @@ viewportFrame.addEventListener(
 );
 
 window.addEventListener("keydown", (event) => {
+	// Space key dismisses the description popup (any layout)
+	if (event.key === " " && activeDescNodeId && !isEditableShortcutTarget(event.target)) {
+		event.preventDefault();
+		hideNodeDesc(true);
+		return;
+	}
+
 	if (!isDesktopLayout() || !renameDialog.hidden || isEditableShortcutTarget(event.target)) {
 		return;
 	}
@@ -1449,6 +1584,13 @@ window.addEventListener("keydown", (event) => {
 		redoTreeChange();
 	}
 });
+
+// Clicking blank space on mobile dismisses the description popup
+viewportFrame.addEventListener("click", (event) => {
+	if (activeDescNodeId && !event.target.closest(".skill-node, .skill-node-desc")) {
+		hideNodeDesc(true);
+	}
+}, { capture: false });
 
 viewportFrame.addEventListener(
 	"touchstart",
