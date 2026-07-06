@@ -35,6 +35,92 @@ function onOutsideClick(event) {
 	closeDeletePopup();
 }
 
+let activeEditModal = null;
+
+function closeEditModal() {
+	if (activeEditModal) {
+		activeEditModal.remove();
+		activeEditModal = null;
+	}
+}
+
+function showEditTitleModal(taskId) {
+	closeEditModal();
+	const task = tasks.find((t) => t.id === taskId);
+	if (!task) {
+		return;
+	}
+
+	const modalOverlay = document.createElement("div");
+	modalOverlay.className = "edit-modal-overlay";
+
+	const modalContainer = document.createElement("div");
+	modalContainer.className = "edit-modal-container";
+
+	const titleLabel = document.createElement("h3");
+	titleLabel.className = "edit-modal-title";
+	titleLabel.textContent = "Edit Project Title";
+
+	const inputField = document.createElement("input");
+	inputField.type = "text";
+	inputField.className = "edit-modal-input";
+	inputField.value = task.title;
+
+	const buttonGroup = document.createElement("div");
+	buttonGroup.className = "edit-modal-buttons";
+
+	const cancelBtn = document.createElement("button");
+	cancelBtn.type = "button";
+	cancelBtn.className = "edit-modal-btn edit-modal-btn--cancel";
+	cancelBtn.textContent = "Cancel";
+	cancelBtn.addEventListener("click", closeEditModal);
+
+	const saveBtn = document.createElement("button");
+	saveBtn.type = "button";
+	saveBtn.className = "edit-modal-btn edit-modal-btn--save";
+	saveBtn.textContent = "Save";
+
+	const submitEdit = () => {
+		const trimmed = inputField.value.trim();
+		if (trimmed) {
+			task.title = trimmed;
+			task.lastSeen = nowStamp();
+			updateTaskRow(task);
+			persistTasks();
+			closeEditModal();
+		}
+	};
+
+	saveBtn.addEventListener("click", submitEdit);
+
+	inputField.addEventListener("keydown", (e) => {
+		if (e.key === "Enter") {
+			e.preventDefault();
+			submitEdit();
+		} else if (e.key === "Escape") {
+			closeEditModal();
+		}
+	});
+
+	buttonGroup.append(cancelBtn, saveBtn);
+	modalContainer.append(titleLabel, inputField, buttonGroup);
+	modalOverlay.appendChild(modalContainer);
+	document.body.appendChild(modalOverlay);
+
+	activeEditModal = modalOverlay;
+
+	setTimeout(() => {
+		inputField.focus();
+		inputField.select();
+	}, 50);
+
+	modalOverlay.addEventListener("click", (e) => {
+		if (e.target === modalOverlay) {
+			closeEditModal();
+		}
+	});
+}
+
 function showDeletePopup(taskId, x, y) {
 	closeDeletePopup();
 
@@ -44,16 +130,24 @@ function showDeletePopup(taskId, x, y) {
 	popup.style.position = "fixed";
 	popup.style.zIndex = "1000";
 
+	const editBtn = document.createElement("button");
+	editBtn.type = "button";
+	editBtn.className = "context-menu-edit-btn";
+	editBtn.textContent = "✏️ Edit Title";
+	editBtn.addEventListener("click", () => {
+		showEditTitleModal(taskId);
+		closeDeletePopup();
+	});
+
 	const deleteBtn = document.createElement("button");
 	deleteBtn.type = "button";
 	deleteBtn.className = "context-menu-delete-btn";
 	deleteBtn.textContent = "🗑 Delete Project";
 	deleteBtn.addEventListener("click", () => {
 		deleteTask(taskId);
-
 	});
 
-	popup.appendChild(deleteBtn);
+	popup.append(editBtn, deleteBtn);
 	document.body.appendChild(popup);
 
 	// Adjust position to stay in viewport bounds
@@ -368,7 +462,6 @@ function renderTasks() {
 		descriptionField.value = task.description;
 		descriptionField.placeholder = "Add a short description...";
 		descriptionField.setAttribute("aria-label", `Description for ${task.title}`);
-		autosizeDescriptionField(descriptionField);
 		descriptionField.addEventListener("input", () => {
 			task.description = descriptionField.value;
 			autosizeDescriptionField(descriptionField);
@@ -389,6 +482,9 @@ function renderTasks() {
 
 	taskList.appendChild(fragment);
 	updateEmptyState();
+
+	// Autosize textareas now that they are attached to the DOM
+	taskList.querySelectorAll(".task-description textarea").forEach(autosizeDescriptionField);
 }
 
 function addTask(title) {
