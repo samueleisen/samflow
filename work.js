@@ -8,11 +8,81 @@ const taskEmpty = document.getElementById("task-empty");
 
 const tasks = [];
 let nextTaskId = 1;
-let openProjectId = null;
+const openProjectIds = new Set();
 let projectsRef = null;
 let projectsUnsubscribe = null;
 let currentUserId = null;
 let lastWrittenDigest = "";
+
+let activeDeletePopup = null;
+let touchTimer = null;
+let holdActive = false;
+let startTouchX = 0;
+let startTouchY = 0;
+let ignoreNextClick = false;
+const HOLD_DURATION_MS = 600;
+const TOUCH_MOVE_THRESHOLD = 10;
+
+function closeDeletePopup() {
+	if (activeDeletePopup) {
+		activeDeletePopup.remove();
+		activeDeletePopup = null;
+		document.removeEventListener("click", onOutsideClick);
+	}
+}
+
+function onOutsideClick(event) {
+	closeDeletePopup();
+}
+
+function showDeletePopup(taskId, x, y) {
+	closeDeletePopup();
+
+	const popup = document.createElement("div");
+	popup.className = "task-context-menu";
+
+	popup.style.position = "fixed";
+	popup.style.zIndex = "1000";
+
+	const deleteBtn = document.createElement("button");
+	deleteBtn.type = "button";
+	deleteBtn.className = "context-menu-delete-btn";
+	deleteBtn.textContent = "🗑 Delete Project";
+	deleteBtn.addEventListener("click", () => {
+		deleteTask(taskId);
+
+	});
+
+	popup.appendChild(deleteBtn);
+	document.body.appendChild(popup);
+
+	// Adjust position to stay in viewport bounds
+	const rect = popup.getBoundingClientRect();
+	let posX = x;
+	let posY = y;
+
+	if (posX + rect.width > window.innerWidth) {
+		posX = window.innerWidth - rect.width - 8;
+	}
+	if (posY + rect.height > window.innerHeight) {
+		posY = window.innerHeight - rect.height - 8;
+	}
+	if (posX < 8) posX = 8;
+	if (posY < 8) posY = 8;
+
+	popup.style.left = `${posX}px`;
+	popup.style.top = `${posY}px`;
+
+	activeDeletePopup = popup;
+
+	setTimeout(() => {
+		document.addEventListener("click", onOutsideClick);
+	}, 0);
+}
+
+window.addEventListener("scroll", closeDeletePopup, { passive: true });
+window.addEventListener("resize", closeDeletePopup);
+
 
 const timeFormatter = new Intl.DateTimeFormat(undefined, {
 	month: "2-digit",
@@ -71,7 +141,7 @@ function coerceTask(candidate, fallbackId) {
 	return {
 		id: Number.isFinite(parsedId) ? parsedId : nextTaskId++,
 		title,
-		status: ["active", "hibernating", "archived"].includes(candidate.status) ? candidate.status : "active",
+		status: candidate.status === "archived" ? "achieved" : (["active", "hibernating", "achieved"].includes(candidate.status) ? candidate.status : "active"),
 		description: String(candidate.description ?? ""),
 		lastSeen: Number.isFinite(Number(candidate.lastSeen)) ? Number(candidate.lastSeen) : nowStamp(),
 	};
@@ -157,7 +227,7 @@ function disconnectFirebaseSync() {
 function resetWorkspaceState() {
 	tasks.length = 0;
 	nextTaskId = 1;
-	openProjectId = null;
+	openProjectIds.clear();
 	renderTasks();
 	updateEmptyState();
 }
@@ -180,10 +250,6 @@ function updateEmptyState() {
 }
 
 function getStatusLabel(status) {
-	if (status === "archived") {
-		return "✓";
-	}
-
 	return "";
 }
 
@@ -193,7 +259,7 @@ function nextStatus(status) {
 	}
 
 	if (status === "hibernating") {
-		return "archived";
+		return "achieved";
 	}
 
 	return "active";
@@ -206,7 +272,7 @@ function touchTask(task) {
 
 	task.lastSeen = nowStamp();
 	updateTaskRow(task);
-	if (task.id === openProjectId) {
+	if (openProjectIds.has(task.id)) {
 		persistTasks();
 	}
 }
@@ -219,7 +285,6 @@ function autosizeDescriptionField(field) {
 	field.style.height = "auto";
 	const nextHeight = Math.min(field.scrollHeight, descriptionMaxHeightPx);
 	field.style.height = `${nextHeight}px`;
-	field.style.overflowY = field.scrollHeight > descriptionMaxHeightPx ? "auto" : "hidden";
 }
 
 function updateTaskRow(task) {
@@ -229,7 +294,7 @@ function updateTaskRow(task) {
 		return;
 	}
 
-	row.className = `task-row is-${task.status}${openProjectId === task.id ? " is-open" : ""}`;
+	row.className = `task-row is-${task.status}${openProjectIds.has(task.id) ? " is-open" : ""}`;
 
 	const statusButton = row.querySelector(".task-status");
 	if (statusButton) {
@@ -267,7 +332,7 @@ function renderTasks() {
 
 	for (const task of tasks) {
 		const row = document.createElement("li");
-		row.className = `task-row is-${task.status}${openProjectId === task.id ? " is-open" : ""}`;
+		row.className = `task-row is-${task.status}${openProjectIds.has(task.id) ? " is-open" : ""}`;
 		row.dataset.taskId = String(task.id);
 
 		const statusButton = document.createElement("button");
@@ -286,7 +351,7 @@ function renderTasks() {
 
 		const stale = document.createElement("span");
 		stale.className = "task-stale";
-		stale.textContent = "Stale";
+		stale.textContent = "STALLED";
 		stale.hidden = !isStale(task);
 
 		const time = document.createElement("time");
@@ -316,13 +381,7 @@ function renderTasks() {
 			persistTasks();
 		});
 
-		const deleteButton = document.createElement("button");
-		deleteButton.type = "button";
-		deleteButton.className = "task-delete";
-		deleteButton.textContent = "Delete project";
-		deleteButton.setAttribute("aria-label", `Delete ${task.title}`);
-
-		descriptionPanel.append(descriptionField, deleteButton);
+		descriptionPanel.append(descriptionField);
 
 		row.append(statusButton, text, meta, descriptionPanel);
 		fragment.appendChild(row);
@@ -347,7 +406,6 @@ function addTask(title) {
 		lastSeen: nowStamp(),
 	});
 
-	openProjectId = null;
 	renderTasks();
 	persistTasks();
 	updateEmptyState();
@@ -376,9 +434,7 @@ function deleteTask(taskId) {
 
 	tasks.splice(taskIndex, 1);
 
-	if (openProjectId === taskId) {
-		openProjectId = null;
-	}
+	openProjectIds.delete(taskId);
 
 	renderTasks();
 	persistTasks();
@@ -386,15 +442,13 @@ function deleteTask(taskId) {
 }
 
 function toggleProjectPanel(taskId) {
-	openProjectId = openProjectId === taskId ? null : taskId;
-	const task = tasks.find((entry) => entry.id === taskId);
-
-	if (task) {
-		touchTask(task);
+	if (openProjectIds.has(taskId)) {
+		openProjectIds.delete(taskId);
+	} else {
+		openProjectIds.add(taskId);
 	}
 
 	renderTasks();
-	persistTasks();
 	updateEmptyState();
 }
 
@@ -402,8 +456,10 @@ function hydrateFromRemote(source) {
 	tasks.length = 0;
 	tasks.push(...normalizeTasks(source));
 	syncNextTaskId();
-	if (!tasks.some((task) => task.id === openProjectId)) {
-		openProjectId = null;
+	for (const id of openProjectIds) {
+		if (!tasks.some((task) => task.id === id)) {
+			openProjectIds.delete(id);
+		}
 	}
 	renderTasks();
 	updateEmptyState();
@@ -417,6 +473,11 @@ taskForm.addEventListener("submit", (event) => {
 });
 
 taskList.addEventListener("click", (event) => {
+	if (ignoreNextClick) {
+		ignoreNextClick = false;
+		return;
+	}
+
 	const row = event.target.closest(".task-row");
 
 	if (!row) {
@@ -434,16 +495,106 @@ taskList.addEventListener("click", (event) => {
 		return;
 	}
 
-	if (event.target.closest(".task-delete")) {
-		deleteTask(taskId);
-		return;
-	}
-
 	if (event.target.closest("textarea")) {
 		return;
 	}
 
 	toggleProjectPanel(taskId);
+});
+
+taskList.addEventListener("contextmenu", (event) => {
+	const row = event.target.closest(".task-row");
+	if (!row) {
+		return;
+	}
+
+	if (event.target.closest(".task-status") || event.target.closest("textarea")) {
+		return;
+	}
+
+	event.preventDefault();
+	const taskId = Number(row.dataset.taskId);
+	if (Number.isFinite(taskId)) {
+		showDeletePopup(taskId, event.clientX, event.clientY);
+	}
+});
+
+taskList.addEventListener("touchstart", (event) => {
+	const row = event.target.closest(".task-row");
+	if (!row) {
+		return;
+	}
+
+	if (event.target.closest(".task-status") || event.target.closest("textarea")) {
+		return;
+	}
+
+	if (event.touches.length !== 1) {
+		return;
+	}
+
+	const touch = event.touches[0];
+	startTouchX = touch.clientX;
+	startTouchY = touch.clientY;
+	holdActive = false;
+
+	const taskId = Number(row.dataset.taskId);
+	if (!Number.isFinite(taskId)) {
+		return;
+	}
+
+	if (touchTimer) {
+		clearTimeout(touchTimer);
+	}
+
+	touchTimer = setTimeout(() => {
+		holdActive = true;
+		ignoreNextClick = true;
+		showDeletePopup(taskId, touch.clientX, touch.clientY);
+		if (navigator.vibrate) {
+			navigator.vibrate(50);
+		}
+	}, HOLD_DURATION_MS);
+}, { passive: true });
+
+taskList.addEventListener("touchmove", (event) => {
+	if (!touchTimer) {
+		return;
+	}
+
+	if (event.touches.length !== 1) {
+		clearTimeout(touchTimer);
+		touchTimer = null;
+		return;
+	}
+
+	const touch = event.touches[0];
+	const deltaX = touch.clientX - startTouchX;
+	const deltaY = touch.clientY - startTouchY;
+
+	if (Math.hypot(deltaX, deltaY) > TOUCH_MOVE_THRESHOLD) {
+		clearTimeout(touchTimer);
+		touchTimer = null;
+	}
+}, { passive: true });
+
+taskList.addEventListener("touchend", (event) => {
+	if (touchTimer) {
+		clearTimeout(touchTimer);
+		touchTimer = null;
+	}
+	if (holdActive) {
+		event.preventDefault();
+		holdActive = false;
+	}
+});
+
+taskList.addEventListener("touchcancel", () => {
+	if (touchTimer) {
+		clearTimeout(touchTimer);
+		touchTimer = null;
+	}
+	holdActive = false;
 });
 
 renderTasks();

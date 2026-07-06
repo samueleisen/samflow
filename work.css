@@ -57,12 +57,12 @@ body.workspace-page {
 	opacity: 0.58;
 }
 
-.task-row.is-archived {
+.task-row.is-achieved {
 	opacity: 0.72;
 }
 
 .task-row.is-hibernating .task-text,
-.task-row.is-archived .task-text {
+.task-row.is-achieved .task-text {
 	color: rgba(244, 247, 251, 0.62);
 }
 
@@ -96,28 +96,30 @@ body.workspace-page {
 }
 
 .task-row.is-hibernating .task-status {
-	background: #f1c84c;
+	background: #fdba00;
 	box-shadow: 0 0 0 4px rgba(241, 200, 76, 0.12);
 }
 
-.task-row.is-archived .task-status {
+.task-row.is-achieved .task-status {
 	background: var(--accent-color);
 	box-shadow: 0 0 0 4px rgba(77, 216, 255, 0.12);
 }
 
-.task-row.is-archived .task-status::after {
-	background: #08111a;
-	transform: scale(1.05);
-}
-
-.task-row.is-archived .task-status::before {
-	content: "✓";
+.task-row.is-achieved .task-status::before {
+	content: "✔";
 	display: block;
-	color: #08111a;
-	font-size: 0.74rem;
+	color: #6e6e6e;
+	font-size: 1rem;
 	line-height: 1;
 	text-align: center;
 	transform: translateY(0.01rem);
+
+	/* --- FORCE IT TRULY BOLD HERE --- */
+	font-weight: 400;
+	-webkit-text-stroke: 1.5px #000454;
+	/* Creates a solid black outline around the checkmark */
+	text-shadow: 0.5px 0 0 #000454, -0.5px 0 0 #000454;
+	/* Fills out anti-aliasing gaps for maximum thickness */
 }
 
 .task-text {
@@ -145,7 +147,7 @@ body.workspace-page {
 }
 
 .task-stale {
-	color: #f1c84c;
+	color: #d74800;
 	font-size: 0.7rem;
 	letter-spacing: 0.04em;
 	white-space: nowrap;
@@ -160,6 +162,8 @@ body.workspace-page {
 	padding-right: 0.15rem;
 	opacity: 0;
 	transition: max-height 240ms ease, opacity 180ms ease, padding-top 180ms ease;
+	display: flex;
+	flex-direction: column;
 }
 
 .task-row.is-open .task-description {
@@ -170,8 +174,8 @@ body.workspace-page {
 
 .task-description textarea {
 	width: 100%;
-	min-height: 15rem;
-	max-height: 25rem;
+	min-height: 6rem;
+	flex: 1 1 auto;
 	resize: none;
 	overflow-y: auto;
 	border: 0;
@@ -183,28 +187,56 @@ body.workspace-page {
 	font: inherit;
 	line-height: 1.5;
 	box-shadow: none;
+	touch-action: pan-y;
+	-webkit-overflow-scrolling: touch;
 }
 
-.task-delete {
+.task-context-menu {
+	background: rgba(18, 24, 38, 0.95);
+	backdrop-filter: blur(12px);
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	border-radius: 8px;
+	padding: 4px;
+	box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+	animation: context-menu-fade-in 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes context-menu-fade-in {
+	from {
+		opacity: 0;
+		transform: scale(0.95) translateY(-4px);
+	}
+	to {
+		opacity: 1;
+		transform: scale(1) translateY(0);
+	}
+}
+
+.context-menu-delete-btn {
 	appearance: none;
-	border: 0;
 	background: transparent;
+	border: 0;
+	outline: none;
 	color: #ff5c5c;
-	font: inherit;
-	font-size: 0.84rem;
-	letter-spacing: 0.03em;
-	text-transform: uppercase;
+	font-family: inherit;
+	font-size: 0.86rem;
+	font-weight: 500;
+	letter-spacing: 0.02em;
+	padding: 8px 16px;
+	width: 100%;
+	text-align: left;
 	cursor: pointer;
-	padding: 0.55rem 0 0;
-	justify-self: start;
-	transition: color 140ms ease, transform 140ms ease;
+	border-radius: 6px;
+	transition: background-color 100ms ease, color 100ms ease;
+	display: flex;
+	align-items: center;
+	gap: 8px;
 }
 
-.task-delete:hover,
-.task-delete:focus-visible {
-	color: #ff8787;
-	transform: translateX(0.08rem);
-	outline: none;
+.context-menu-delete-btn:hover,
+.context-menu-delete-btn:focus-visible {
+	background-color: rgba(255, 92, 92, 0.12);
+	color: #ff7878;
 }
 
 .task-empty {

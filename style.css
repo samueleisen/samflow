@@ -682,11 +682,11 @@ a {
 }
 
 .event-card__desc {
-    margin-top: 3px;
+    margin-top: 7px;
     /* Adjust this value to manually set the gap from the time/title above */
     color: rgba(244, 247, 251, 0.48);
     font-size: 0.8rem;
-    line-height: 1.24;
+    line-height: 1.41;
     white-space: pre-wrap;
 }
 
