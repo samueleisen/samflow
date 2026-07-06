@@ -55,6 +55,7 @@ const scheduleStartInput = document.getElementById("schedule-start");
 const scheduleEndInput = document.getElementById("schedule-end");
 const scheduleSaveButton = document.getElementById("schedule-save");
 const scheduleDeleteButton = document.getElementById("schedule-delete");
+const scheduleDescriptionInput = document.getElementById("schedule-description");
 const scheduleModalKicker = document.getElementById("schedule-modal-kicker");
 const scheduleModalTitle = document.getElementById("schedule-modal-title");
 const cardById = new Map();
@@ -82,6 +83,7 @@ function normalizeDayItems(dayItems = []) {
         .map((item) => ({
             id: Number(item.id),
             title: String(item.title ?? "").trim(),
+            description: String(item.description ?? "").trim(),
             startTime: String(item.startTime ?? "00:00"),
             endTime: String(item.endTime ?? "00:00"),
             accent: String(item.accent ?? "#4dd8ff"),
@@ -107,6 +109,7 @@ function exportSchedulesSnapshot() {
         snapshot[day] = getDayItems(day).map((item) => ({
             id: item.id,
             title: item.title,
+            description: item.description ?? "",
             startTime: item.startTime,
             endTime: item.endTime,
             accent: item.accent || "#4dd8ff",
@@ -360,9 +363,13 @@ function syncCard(card, item) {
 
     const titleLabel = card.querySelector(".event-card__title");
     const timeLabel = card.querySelector(".event-card__time");
+    const descLabel = card.querySelector(".event-card__desc");
 
     titleLabel.textContent = item.title || "";
     timeLabel.textContent = `${item.startTime} - ${item.endTime}`;
+    if (descLabel) {
+        descLabel.textContent = item.description || "";
+    }
 }
 
 function renderTimeline() {
@@ -380,6 +387,7 @@ function renderTimeline() {
             <div class="event-card__content">
                 <p class="event-card__title"></p>
                 <p class="event-card__time"></p>
+                <p class="event-card__desc"></p>
             </div>
         `;
 
@@ -415,6 +423,7 @@ function createDraftAt(day, startMinutes) {
     const draft = {
         id: getNextId(),
         title: "",
+        description: "",
         startTime: minutesToTime(boundedStart),
         endTime: minutesToTime(boundedStart + DEFAULT_DURATION),
         accent: "#4dd8ff",
@@ -440,6 +449,7 @@ function openEditor(item, isNew) {
     scheduleDeleteButton.hidden = isNew;
 
     scheduleTitleInput.value = item.title || "";
+    scheduleDescriptionInput.value = item.description || "";
     scheduleStartInput.value = item.startTime;
     scheduleEndInput.value = item.endTime;
     scheduleSaveButton.disabled = !scheduleTitleInput.value.trim();
@@ -494,6 +504,8 @@ function commitEditor() {
         return;
     }
 
+    const description = scheduleDescriptionInput.value.trim();
+
     const startMinutes = clampToDay(snapToSlot(timeToMinutes(scheduleStartInput.value)));
     let endMinutes = clampToDay(snapToSlot(timeToMinutes(scheduleEndInput.value)));
 
@@ -506,6 +518,7 @@ function commitEditor() {
     }
 
     activeEditorItem.title = title;
+    activeEditorItem.description = description;
     activeEditorItem.startTime = minutesToTime(startMinutes);
     activeEditorItem.endTime = minutesToTime(endMinutes);
     activeEditorItem.isDraft = false;
