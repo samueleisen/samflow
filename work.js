@@ -647,8 +647,12 @@ taskList.addEventListener("touchstart", (event) => {
 		holdActive = true;
 		ignoreNextClick = true;
 		showDeletePopup(taskId, touch.clientX, touch.clientY);
-		if (navigator.vibrate) {
-			navigator.vibrate(50);
+		if (navigator.vibrate && (!navigator.userActivation || navigator.userActivation.hasBeenActive)) {
+			try {
+				navigator.vibrate(50);
+			} catch (e) {
+				// Ignore vibration failures
+			}
 		}
 	}, HOLD_DURATION_MS);
 }, { passive: true });
