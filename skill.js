@@ -1,5 +1,5 @@
-import { database, ref, set, onValue, push, remove } from "./firebase-config.js";
-import { subscribeAuthState } from "./auth.js";
+import { ViewportCamera } from "./viewport-camera.js";
+import { SkillSync } from "./skill-sync.js";
 
 const viewportFrame = document.getElementById("viewport-frame");
 const canvas = document.getElementById("skill-canvas");
@@ -67,13 +67,6 @@ const guestDemoConnections = [
 	},
 ];
 
-let nodesRef = null;
-let connectionsRef = null;
-let nodesUnsubscribe = null;
-let connectionsUnsubscribe = null;
-let currentUserId = null;
-let currentAuthUser = null;
-
 const connectionLayer = document.createElementNS(svgNs, "g");
 connectionLayer.setAttribute("id", "skill-connection-layer");
 lineLayer.appendChild(connectionLayer);
@@ -125,28 +118,45 @@ ensureConnectionMarkers();
 
 viewportFrame.tabIndex = 0;
 
+const camera = new ViewportCamera(viewportFrame, canvas, {
+	canvasSize,
+	minZoom,
+	maxZoom,
+	defaultZoom,
+	wheelZoomIntensity,
+	interactionThreshold
+});
+
+const clampPan = (x, y) => camera.clampPan(x, y);
+const updateCanvasTransform = () => camera.updateCanvasTransform();
+const setZoomAtViewportPoint = (vx, vy, z) => camera.setZoomAtViewportPoint(vx, vy, z);
+const centerCanvasView = () => camera.centerCanvasView();
+const refreshViewportBounds = () => camera.refreshViewportBounds();
+const getCanvasPoint = (e) => camera.getCanvasPoint(e.clientX, e.clientY);
+const getTouchPairDistance = (t1, t2) => camera.getTouchPairDistance(t1, t2);
+const getTouchPairCenter = (t1, t2) => camera.getTouchPairCenter(t1, t2);
+const cancelActivePanForPinch = () => {
+	camera.cancelActivePanForPinch();
+	pendingNodePointer = null;
+};
+
 let editMode = false;
 let deleteMode = false;
-let panX = 0;
-let panY = 0;
-let zoom = defaultZoom;
-let viewportBounds = viewportFrame.getBoundingClientRect();
 let firstSelectedNodeId = null;
 let selectedNodes = [];
 let activeRenameNodeId = null;
 let lastNodesDigest = "";
 let lastConnectionsDigest = "";
-let activePan = null;
 let pendingNodePointer = null;
 let activeNodeDrag = null;
 let activeResize = null;
-let activePinch = null;
 let latestNodesSource = null;
 let latestConnectionsSource = null;
 let historyUndoStack = [];
 let historyRedoStack = [];
 
 const historyLimit = 100;
+
 
 const interactionState = {
 	consumeClick: false,
@@ -226,7 +236,7 @@ function canChangeStatus() {
 }
 
 function hasRemoteTreeSync() {
-	return Boolean(nodesRef && connectionsRef && currentUserId);
+	return skillSync.hasRemoteTreeSync();
 }
 
 function createLocalId(prefix) {
@@ -330,17 +340,16 @@ function computeNodeFontSize(title, nodeSize) {
 		pendingNodePointer = null;
 		activeNodeDrag = null;
 		activeResize = null;
-		activePan = null;
-		activePinch = null;
+		camera.activePan = null;
+		camera.activePinch = null;
 		renderScene();
 		updateControlsUi();
 
-		if (!nodesRef || !connectionsRef || !currentUserId) {
+		if (!skillSync.hasRemoteTreeSync()) {
 			return;
 		}
 
-		set(nodesRef, serializeNodes(latestNodesSource));
-		set(connectionsRef, serializeConnections(latestConnectionsSource));
+		skillSync.setTreeData(serializeNodes(latestNodesSource), serializeConnections(latestConnectionsSource));
 	}
 
 	function undoTreeChange() {
@@ -402,99 +411,7 @@ function connectionDigest(connections) {
 	);
 }
 
-function clampPan(nextX, nextY) {
-	const scaledWidth = canvasSize * zoom;
-	const scaledHeight = canvasSize * zoom;
 
-	let minX;
-	let maxX;
-	let minY;
-	let maxY;
-
-	if (scaledWidth <= viewportBounds.width) {
-		const centeredX = (viewportBounds.width - scaledWidth) / 2;
-		minX = centeredX;
-		maxX = centeredX;
-	} else {
-		minX = viewportBounds.width - scaledWidth;
-		maxX = 0;
-	}
-
-	if (scaledHeight <= viewportBounds.height) {
-		const centeredY = (viewportBounds.height - scaledHeight) / 2;
-		minY = centeredY;
-		maxY = centeredY;
-	} else {
-		minY = viewportBounds.height - scaledHeight;
-		maxY = 0;
-	}
-
-	return {
-		x: clamp(nextX, minX, maxX),
-		y: clamp(nextY, minY, maxY),
-	};
-}
-
-function updateCanvasTransform() {
-	canvas.style.transform = `translate3d(${panX}px, ${panY}px, 0) scale(${zoom})`;
-}
-
-function setZoomAtViewportPoint(viewportX, viewportY, nextZoom) {
-	const clampedZoom = clamp(nextZoom, minZoom, maxZoom);
-	const canvasX = (viewportX - panX) / zoom;
-	const canvasY = (viewportY - panY) / zoom;
-
-	zoom = clampedZoom;
-	panX = viewportX - canvasX * zoom;
-	panY = viewportY - canvasY * zoom;
-
-	const clamped = clampPan(panX, panY);
-	panX = clamped.x;
-	panY = clamped.y;
-	updateCanvasTransform();
-}
-
-function centerCanvasView() {
-	const canvasCenter = canvasSize / 2;
-	panX = viewportBounds.width / 2 - canvasCenter * zoom;
-	panY = viewportBounds.height / 2 - canvasCenter * zoom;
-
-	const clamped = clampPan(panX, panY);
-	panX = clamped.x;
-	panY = clamped.y;
-	updateCanvasTransform();
-}
-
-function refreshViewportBounds() {
-	viewportBounds = viewportFrame.getBoundingClientRect();
-	const clamped = clampPan(panX, panY);
-	panX = clamped.x;
-	panY = clamped.y;
-	updateCanvasTransform();
-}
-
-function getCanvasPoint(event) {
-	return {
-		x: clamp((event.clientX - viewportBounds.left - panX) / zoom, 0, canvasSize),
-		y: clamp((event.clientY - viewportBounds.top - panY) / zoom, 0, canvasSize),
-	};
-}
-
-function getTouchPairDistance(firstTouch, secondTouch) {
-	return Math.hypot(secondTouch.clientX - firstTouch.clientX, secondTouch.clientY - firstTouch.clientY);
-}
-
-function getTouchPairCenter(firstTouch, secondTouch) {
-	return {
-		x: (firstTouch.clientX + secondTouch.clientX) / 2,
-		y: (firstTouch.clientY + secondTouch.clientY) / 2,
-	};
-}
-
-function cancelActivePanForPinch() {
-	activePan = null;
-	pendingNodePointer = null;
-}
 
 function coerceNode(candidate, fallbackId) {
 	if (!candidate || typeof candidate !== "object") {
@@ -872,57 +789,55 @@ function renderNodes(nodes) {
 	const modifying = canModifyStructure();
 	const deleting = canDelete();
 	const isMobile = !isDesktopLayout();
-	nodeLayer.replaceChildren();
 
+	// 1. Map existing children by nodeId
+	const existingEls = new Map();
+	for (const child of nodeLayer.children) {
+		const nodeId = child.dataset.nodeId;
+		if (nodeId) {
+			existingEls.set(nodeId, child);
+		}
+	}
+
+	const activeIds = new Set();
+
+	// 2. Loop through nodes to update or create
 	for (const nodeData of nodes) {
-		const node = document.createElement("button");
-		node.type = "button";
-		node.className = `skill-node state-${nodeData.state}`;
-		node.dataset.nodeId = nodeData.id;
-		node.style.width = `${nodeData.size}px`;
-		node.style.height = `${nodeData.size}px`;
-		node.style.left = `${nodeData.x - nodeData.size / 2}px`;
-		node.style.top = `${nodeData.y - nodeData.size / 2}px`;
-		node.setAttribute("aria-label", `${nodeData.title}, status ${nodeData.state}`);
-		node.innerHTML = `
-			<span class="skill-node__label">${escapeHtml(nodeData.title)}</span>
-			${modifying ? '<span class="skill-node__resize" aria-hidden="true"></span>' : ""}
-		`;
+		activeIds.add(nodeData.id);
+		let node = existingEls.get(nodeData.id);
 
-		// Apply computed font size based on title length and node size
-		const labelEl = node.querySelector('.skill-node__label');
-		if (labelEl) {
-			labelEl.style.fontSize = computeNodeFontSize(nodeData.title, nodeData.size);
-		}
-
-		if (deleting) {
-			node.classList.add("is-deletable");
-		}
-
-		// ── Description: desktop hover ───────────────────────────────
-		if (!isMobile) {
+		if (!node) {
+			// CREATE NODE
+			node = document.createElement("button");
+			node.type = "button";
+			node.dataset.nodeId = nodeData.id;
+			
+			// Attach listeners once
 			node.addEventListener("mouseenter", () => {
-				if ((nodeData.description ?? "").trim()) {
-					showNodeDesc(nodeData.id, node);
+				const data = node._nodeData;
+				const isMobileDevice = !isDesktopLayout();
+				if (!isMobileDevice && data && (data.description ?? "").trim()) {
+					showNodeDesc(data.id, node);
 				}
 			});
 
 			node.addEventListener("mouseleave", () => {
-				if (activeDescNodeId === nodeData.id) {
+				const data = node._nodeData;
+				const isMobileDevice = !isDesktopLayout();
+				if (!isMobileDevice && data && activeDescNodeId === data.id) {
 					hideNodeDesc();
 				}
 			});
-		}
 
-		// ── Description: mobile long-press (500 ms) ──────────────────
-		if (isMobile) {
 			node.addEventListener("touchstart", (event) => {
-				if (!(nodeData.description ?? "").trim()) return;
+				const data = node._nodeData;
+				const isMobileDevice = !isDesktopLayout();
+				if (!isMobileDevice || !data || !(data.description ?? "").trim()) return;
 				descLongPressActive = false;
 				if (descLongPressTimer) clearTimeout(descLongPressTimer);
 				descLongPressTimer = setTimeout(() => {
 					descLongPressActive = true;
-					showNodeDesc(nodeData.id, node);
+					showNodeDesc(data.id, node);
 				}, 500);
 			}, { passive: true });
 
@@ -934,93 +849,130 @@ function renderNodes(nodes) {
 			}, { passive: true });
 
 			node.addEventListener("touchmove", () => {
-				// Cancel long press if finger moves
 				if (descLongPressTimer) {
 					clearTimeout(descLongPressTimer);
 					descLongPressTimer = null;
 				}
 			}, { passive: true });
+
+			node.addEventListener("contextmenu", (event) => {
+				const data = node._nodeData;
+				if (!canModifyStructure() || !data) {
+					return;
+				}
+				event.preventDefault();
+				event.stopPropagation();
+				hideNodeDesc(true);
+				openRenameDialog(data.id);
+			});
+
+			node.addEventListener("pointerdown", (event) => {
+				const data = node._nodeData;
+				if (!canEditStructure() || event.button !== 0 || !data) {
+					return;
+				}
+				if (event.shiftKey) {
+					event.stopPropagation();
+					toggleSelectedNode(data.id);
+					interactionState.consumeClick = true;
+					return;
+				}
+				event.stopPropagation();
+				if (canDelete()) {
+					beginNodePointer(data.id, event, "delete");
+					return;
+				}
+				if (!canModifyStructure()) {
+					return;
+				}
+				const resizeHandle = event.target.closest(".skill-node__resize");
+				beginNodePointer(data.id, event, resizeHandle ? "resize" : "drag");
+			});
+
+			node.addEventListener("click", (event) => {
+				const data = node._nodeData;
+				if (!data) return;
+				event.stopPropagation();
+				if (interactionState.consumeClick) {
+					interactionState.consumeClick = false;
+					return;
+				}
+				if (canDelete()) {
+					deleteNode(data.id);
+					return;
+				}
+				if (canEditStructure()) {
+					return;
+				}
+				event.preventDefault();
+				if (canChangeStatus()) {
+					cycleNodeStatus(data.id);
+				}
+			});
+
+			node.addEventListener("dblclick", (event) => {
+				const data = node._nodeData;
+				if (!data) return;
+				if (!canModifyStructure()) {
+					return;
+				}
+				if (interactionState.consumeClick) {
+					return;
+				}
+				event.preventDefault();
+				event.stopPropagation();
+				firstSelectedNodeId = null;
+				renderSelection();
+				cycleNodeStatus(data.id);
+			});
+
+			nodeLayer.appendChild(node);
 		}
 
-		node.addEventListener("contextmenu", (event) => {
-			if (!canModifyStructure()) {
-				return;
+		// UPDATE STATE AND STYLES
+		node._nodeData = nodeData;
+		node.className = `skill-node state-${nodeData.state}${deleting ? " is-deletable" : ""}`;
+		node.style.width = `${nodeData.size}px`;
+		node.style.height = `${nodeData.size}px`;
+		node.style.left = `${nodeData.x - nodeData.size / 2}px`;
+		node.style.top = `${nodeData.y - nodeData.size / 2}px`;
+		node.setAttribute("aria-label", `${nodeData.title}, status ${nodeData.state}`);
+
+		// Update or create label
+		let labelEl = node.querySelector('.skill-node__label');
+		if (!labelEl) {
+			labelEl = document.createElement("span");
+			labelEl.className = "skill-node__label";
+			node.appendChild(labelEl);
+		}
+		
+		const titleEscaped = escapeHtml(nodeData.title);
+		if (labelEl.innerHTML !== titleEscaped) {
+			labelEl.innerHTML = titleEscaped;
+		}
+		labelEl.style.fontSize = computeNodeFontSize(nodeData.title, nodeData.size);
+
+		// Update or create resize handle
+		let resizeEl = node.querySelector('.skill-node__resize');
+		if (modifying) {
+			if (!resizeEl) {
+				resizeEl = document.createElement("span");
+				resizeEl.className = "skill-node__resize";
+				resizeEl.setAttribute("aria-hidden", "true");
+				node.appendChild(resizeEl);
 			}
-
-			event.preventDefault();
-			event.stopPropagation();
-			hideNodeDesc(true);
-			openRenameDialog(nodeData.id);
-		});
-
-		node.addEventListener("pointerdown", (event) => {
-			if (!structureEditing || event.button !== 0) {
-				return;
+		} else {
+			if (resizeEl) {
+				resizeEl.remove();
 			}
+		}
+	}
 
-			if (event.shiftKey) {
-				event.stopPropagation();
-				toggleSelectedNode(nodeData.id);
-				interactionState.consumeClick = true;
-				return;
-			}
-
-			event.stopPropagation();
-
-			if (deleting) {
-				beginNodePointer(nodeData.id, event, "delete");
-				return;
-			}
-
-			if (!modifying) {
-				return;
-			}
-
-			const resizeHandle = event.target.closest(".skill-node__resize");
-			beginNodePointer(nodeData.id, event, resizeHandle ? "resize" : "drag");
-		});
-
-		node.addEventListener("click", (event) => {
-			event.stopPropagation();
-
-			if (interactionState.consumeClick) {
-				interactionState.consumeClick = false;
-				return;
-			}
-
-			if (deleting) {
-				deleteNode(nodeData.id);
-				return;
-			}
-
-			if (structureEditing) {
-				return;
-			}
-
-			event.preventDefault();
-
-			if (canChangeStatus()) {
-				cycleNodeStatus(nodeData.id);
-			}
-		});
-
-		node.addEventListener("dblclick", (event) => {
-			if (!modifying) {
-				return;
-			}
-
-			if (interactionState.consumeClick) {
-				return;
-			}
-
-			event.preventDefault();
-			event.stopPropagation();
-			firstSelectedNodeId = null;
-			renderSelection();
-			cycleNodeStatus(nodeData.id);
-		});
-
-		nodeLayer.appendChild(node);
+	// 3. Remove obsolete nodes
+	for (const [nodeId, childEl] of existingEls) {
+		if (!activeIds.has(nodeId)) {
+			childEl.remove();
+		}
 	}
 
 	renderSelection();
@@ -1035,11 +987,7 @@ function renderScene() {
 }
 
 function persistNode(node) {
-	if (!hasRemoteTreeSync()) {
-		return;
-	}
-
-	set(ref(database, `users/${currentUserId}/skillTree/nodes/${node.id}`), node);
+	skillSync.persistNode(node);
 }
 // removal
 function removeConnectionFromLocalState(connectionId) {
@@ -1050,8 +998,9 @@ function removeConnectionFromLocalState(connectionId) {
 }
 
 function deleteNode(nodeId) {
+	pushHistorySnapshot(captureTreeSnapshot());
+
 	if (!hasRemoteTreeSync()) {
-		pushHistorySnapshot(captureTreeSnapshot());
 		latestNodesSource = normalizeNodes(latestNodesSource).filter((node) => node.id !== nodeId);
 		latestConnectionsSource = normalizeConnections(latestConnectionsSource).filter(
 			(connection) => connection.from !== nodeId && connection.to !== nodeId,
@@ -1071,12 +1020,7 @@ function deleteNode(nodeId) {
 		return;
 	}
 
-	if (!nodesRef || !currentUserId) {
-		return;
-	}
-
-	pushHistorySnapshot(captureTreeSnapshot());
-	remove(ref(database, `users/${currentUserId}/skillTree/nodes/${nodeId}`));
+	skillSync.deleteNode(nodeId);
 
 	for (const connection of normalizeConnections(latestConnectionsSource)) {
 		if (connection.from === nodeId || connection.to === nodeId) {
@@ -1096,30 +1040,20 @@ function deleteNode(nodeId) {
 }
 
 function deleteConnection(connectionId, skipHistory = false) {
-	if (!hasRemoteTreeSync()) {
-		if (!skipHistory) {
-			pushHistorySnapshot(captureTreeSnapshot());
-		}
-
-		removeConnectionFromLocalState(connectionId);
-		return;
-	}
-
-	if (!connectionsRef || !currentUserId) {
-		return;
-	}
-
 	if (!skipHistory) {
 		pushHistorySnapshot(captureTreeSnapshot());
 	}
 
 	removeConnectionFromLocalState(connectionId);
-	remove(ref(database, `users/${currentUserId}/skillTree/connections/${connectionId}`));
+
+	if (hasRemoteTreeSync()) {
+		skillSync.deleteConnection(connectionId);
+	}
 }
 
 function updateControlsUi() {
 	const desktop = isDesktopLayout();
-	const signedIn = Boolean(currentAuthUser);
+	const signedIn = Boolean(skillSync.currentAuthUser);
 	viewportFrame.classList.toggle("is-desktop", desktop);
 	viewportFrame.classList.toggle("is-mobile", !desktop);
 	viewportFrame.classList.toggle("is-editing", canModifyStructure());
@@ -1209,9 +1143,7 @@ function handleNodeSelection(nodeId) {
 		pushHistorySnapshot(captureTreeSnapshot());
 
 		if (hasRemoteTreeSync()) {
-			const connectionRef = push(connectionsRef);
-			set(connectionRef, {
-				id: connectionRef.key,
+			skillSync.pushNewConnection({
 				from: firstSelectedNodeId,
 				to: nodeId,
 				createdAt: nowStamp(),
@@ -1311,14 +1243,7 @@ function pointerMovedBeyondThreshold(event, startX, startY) {
 }
 
 function beginPan(event) {
-	activePan = {
-		pointerId: event.pointerId,
-		startClientX: event.clientX,
-		startClientY: event.clientY,
-		originX: panX,
-		originY: panY,
-		moved: false,
-	};
+	camera.beginPan(event);
 	interactionState.consumeClick = false;
 	viewportFrame.setPointerCapture(event.pointerId);
 }
@@ -1353,9 +1278,7 @@ function createNodeAtEvent(event) {
 	};
 
 	if (hasRemoteTreeSync()) {
-		const nodeRef = push(nodesRef);
-		node.id = nodeRef.key;
-		set(nodeRef, node);
+		skillSync.pushNewNode(node);
 	} else {
 		latestNodesSource = upsertNode(latestNodesSource, node);
 		renderScene();
@@ -1375,9 +1298,9 @@ function finishPointerInteraction(event) {
 		pendingNodePointer = null;
 	}
 
-	if (activePan && activePan.pointerId === event.pointerId) {
-		interactionState.consumeClick = activePan.moved;
-		activePan = null;
+	if (camera.activePan && camera.activePan.pointerId === event.pointerId) {
+		interactionState.consumeClick = camera.activePan.moved;
+		camera.activePan = null;
 	}
 // multi
 	if (activeNodeDrag && activeNodeDrag.pointerId === event.pointerId) {
@@ -1435,7 +1358,7 @@ function finishPointerInteraction(event) {
 }
 
 viewportFrame.addEventListener("pointerdown", (event) => {
-	if (activePinch || event.button !== 0 || canEditStructure() || canDelete()) {
+	if (camera.activePinch || event.button !== 0 || canEditStructure() || canDelete()) {
 		return;
 	}
 
@@ -1447,7 +1370,7 @@ viewportFrame.addEventListener("pointerdown", (event) => {
 });
 
 viewportFrame.addEventListener("pointermove", (event) => {
-	if (activePinch) {
+	if (camera.activePinch) {
 		return;
 	}
 
@@ -1462,18 +1385,18 @@ viewportFrame.addEventListener("pointermove", (event) => {
 		promotePendingNodePointer(event);
 	}
 
-	if (activePan && activePan.pointerId === event.pointerId) {
-		const deltaX = event.clientX - activePan.startClientX;
-		const deltaY = event.clientY - activePan.startClientY;
+	if (camera.activePan && camera.activePan.pointerId === event.pointerId) {
+		const deltaX = event.clientX - camera.activePan.startClientX;
+		const deltaY = event.clientY - camera.activePan.startClientY;
 
 		if (Math.abs(deltaX) > interactionThreshold || Math.abs(deltaY) > interactionThreshold) {
-			activePan.moved = true;
+			camera.activePan.moved = true;
 		}
 
-		const clamped = clampPan(activePan.originX + deltaX, activePan.originY + deltaY);
-		panX = clamped.x;
-		panY = clamped.y;
-		updateCanvasTransform();
+		const clamped = camera.clampPan(camera.activePan.originX + deltaX, camera.activePan.originY + deltaY);
+		camera.panX = clamped.x;
+		camera.panY = clamped.y;
+		camera.updateCanvasTransform();
 	}
 
 	if (activeNodeDrag && activeNodeDrag.pointerId === event.pointerId) {
@@ -1548,10 +1471,10 @@ viewportFrame.addEventListener(
 		}
 
 		event.preventDefault();
-		const viewportX = event.clientX - viewportBounds.left;
-		const viewportY = event.clientY - viewportBounds.top;
+		const viewportX = event.clientX - camera.viewportBounds.left;
+		const viewportY = event.clientY - camera.viewportBounds.top;
 		const zoomFactor = Math.exp(-event.deltaY * wheelZoomIntensity);
-		setZoomAtViewportPoint(viewportX, viewportY, zoom * zoomFactor);
+		camera.setZoomAtViewportPoint(viewportX, viewportY, camera.zoom * zoomFactor);
 	},
 	{ passive: false },
 );
@@ -1609,9 +1532,9 @@ viewportFrame.addEventListener(
 		const firstTouch = event.touches[0];
 		const secondTouch = event.touches[1];
 
-		activePinch = {
+		camera.activePinch = {
 			startDistance: getTouchPairDistance(firstTouch, secondTouch),
-			startZoom: zoom,
+			startZoom: camera.zoom,
 		};
 	},
 	{ passive: false },
@@ -1620,7 +1543,7 @@ viewportFrame.addEventListener(
 viewportFrame.addEventListener(
 	"touchmove",
 	(event) => {
-		if (!activePinch || event.touches.length < 2) {
+		if (!camera.activePinch || event.touches.length < 2) {
 			return;
 		}
 
@@ -1630,11 +1553,11 @@ viewportFrame.addEventListener(
 		const secondTouch = event.touches[1];
 		const distance = getTouchPairDistance(firstTouch, secondTouch);
 		const center = getTouchPairCenter(firstTouch, secondTouch);
-		const viewportX = center.x - viewportBounds.left;
-		const viewportY = center.y - viewportBounds.top;
-		const nextZoom = activePinch.startZoom * (distance / activePinch.startDistance);
+		const viewportX = center.x - camera.viewportBounds.left;
+		const viewportY = center.y - camera.viewportBounds.top;
+		const nextZoom = camera.activePinch.startZoom * (distance / camera.activePinch.startDistance);
 
-		setZoomAtViewportPoint(viewportX, viewportY, nextZoom);
+		camera.setZoomAtViewportPoint(viewportX, viewportY, nextZoom);
 	},
 	{ passive: false },
 );
@@ -1644,7 +1567,7 @@ function finishTouchZoom(event) {
 		return;
 	}
 
-	activePinch = null;
+	camera.activePinch = null;
 }
 
 viewportFrame.addEventListener("touchend", finishTouchZoom);
@@ -1745,58 +1668,9 @@ function handleLayoutChange() {
 desktopQuery.addEventListener("change", handleLayoutChange);
 window.addEventListener("resize", refreshViewportBounds);
 
-function disconnectSkillSync() {
-	if (typeof nodesUnsubscribe === "function") {
-		nodesUnsubscribe();
-	}
-
-	if (typeof connectionsUnsubscribe === "function") {
-		connectionsUnsubscribe();
-	}
-
-	nodesUnsubscribe = null;
-	connectionsUnsubscribe = null;
-	nodesRef = null;
-	connectionsRef = null;
-	currentUserId = null;
-	lastNodesDigest = "";
-	lastConnectionsDigest = "";
-	resetHistory();
-}
-
-function resetSkillState() {
-	latestNodesSource = cloneGuestDemoNodes();
-	latestConnectionsSource = cloneGuestDemoConnections();
-	firstSelectedNodeId = null;
-	clearSelectedNodes();
-	closeRenameDialog();
-	editMode = false;
-	deleteMode = false;
-	resetHistory();
-	lastNodesDigest = nodeDigest(latestNodesSource);
-	lastConnectionsDigest = connectionDigest(latestConnectionsSource);
-	updateControlsUi();
-	renderScene();
-}
-
-function connectSkillSyncForUser(user) {
-	disconnectSkillSync();
-
-	if (!user) {
-		currentAuthUser = null;
-		resetSkillState();
-		updateControlsUi();
-		renderScene();
-		return;
-	}
-
-	currentAuthUser = user;
-	currentUserId = user.uid;
-	nodesRef = ref(database, `users/${user.uid}/skillTree/nodes`);
-	connectionsRef = ref(database, `users/${user.uid}/skillTree/connections`);
-
-	nodesUnsubscribe = onValue(nodesRef, (snapshot) => {
-		const incoming = normalizeNodes(snapshot.val());
+const skillSync = new SkillSync({
+	onNodesUpdate: (val) => {
+		const incoming = normalizeNodes(val);
 		const digest = nodeDigest(incoming);
 
 		latestNodesSource = incoming;
@@ -1810,10 +1684,9 @@ function connectSkillSyncForUser(user) {
 			firstSelectedNodeId = null;
 		}
 		renderScene();
-	});
-
-	connectionsUnsubscribe = onValue(connectionsRef, (snapshot) => {
-		const incoming = normalizeConnections(snapshot.val());
+	},
+	onConnectionsUpdate: (val) => {
+		const incoming = normalizeConnections(val);
 		const digest = connectionDigest(incoming);
 
 		latestConnectionsSource = incoming;
@@ -1824,29 +1697,26 @@ function connectSkillSyncForUser(user) {
 
 		lastConnectionsDigest = digest;
 		renderScene();
-	});
-
-	updateControlsUi();
-}
-
-subscribeAuthState((state) => {
-	if (!state.ready) {
-		return;
-	}
-
-	if (!state.user) {
-		connectSkillSyncForUser(null);
-		return;
-	}
-
-	if (currentUserId === state.user.uid && nodesRef && connectionsRef) {
-		currentAuthUser = state.user;
+	},
+	onAuthStateChange: (user) => {
+		if (!user) {
+			latestNodesSource = cloneGuestDemoNodes();
+			latestConnectionsSource = cloneGuestDemoConnections();
+			firstSelectedNodeId = null;
+			clearSelectedNodes();
+			closeRenameDialog();
+			editMode = false;
+			deleteMode = false;
+			resetHistory();
+			lastNodesDigest = nodeDigest(latestNodesSource);
+			lastConnectionsDigest = connectionDigest(latestConnectionsSource);
+		}
 		updateControlsUi();
-		return;
+		renderScene();
 	}
-
-	connectSkillSyncForUser(state.user);
 });
+
+skillSync.init();
 
 refreshViewportBounds();
 centerCanvasView();
