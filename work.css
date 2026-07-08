@@ -40,7 +40,7 @@ body.workspace-page {
 
 .task-row {
 	display: grid;
-	grid-template-columns: auto minmax(0, 1fr) auto;
+	grid-template-columns: auto auto minmax(0, 1fr) auto;
 	align-items: center;
 	gap: 1rem;
 	min-height: 4rem;
@@ -389,6 +389,41 @@ body.workspace-page {
 	color: rgba(244, 247, 251, 0.42);
 	font-size: 0.92rem;
 }
+
+.task-drag-handle {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 1.5rem;
+	height: 2.2rem;
+	color: rgba(244, 247, 251, 0.24);
+	cursor: grab;
+	touch-action: none;
+	user-select: none;
+	transition: color 140ms ease, transform 140ms ease;
+}
+
+.task-drag-handle:hover {
+	color: rgba(244, 247, 251, 0.62);
+}
+
+.task-drag-handle:active {
+	cursor: grabbing;
+}
+
+.task-drag-handle svg {
+	width: 12px;
+	height: 18px;
+	pointer-events: none; /* Make sure pointer events fall through to the handle */
+}
+
+.task-row.is-dragging {
+	background: rgba(255, 255, 255, 0.08) !important;
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+	opacity: 0.92;
+	transition: none !important;
+}
+
 
 @media (hover: hover) and (pointer: fine) {
 	.task-row:hover {

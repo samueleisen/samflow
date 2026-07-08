@@ -429,6 +429,139 @@ function renderTasks() {
 		row.className = `task-row is-${task.status}${openProjectIds.has(task.id) ? " is-open" : ""}`;
 		row.dataset.taskId = String(task.id);
 
+		const dragHandle = document.createElement("div");
+		dragHandle.className = "task-drag-handle";
+		dragHandle.setAttribute("aria-label", "Drag to reorder");
+		dragHandle.innerHTML = `
+			<svg width="12" height="18" viewBox="0 0 12 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+				<path d="M4 3C4 3.55228 3.55228 4 3 4C2.44772 4 2 3.55228 2 3C2 2.44772 2.44772 2 3 2C3.55228 2 4 2.44772 4 3Z" fill="currentColor"/>
+				<path d="M4 9C4 9.55228 3.55228 10 3 10C2.44772 10 2 9.55228 2 9C2 8.44772 2.44772 8 3 8C3.55228 8 4 8.44772 4 9Z" fill="currentColor"/>
+				<path d="M4 15C4 15.5523 3.55228 16 3 16C2.44772 16 2 15.5523 2 15C2 14.4477 2.44772 14 3 14C3.55228 14 4 14.4477 4 15Z" fill="currentColor"/>
+				<path d="M10 3C10 3.55228 9.55228 4 9 4C8.44772 4 8 3.55228 8 3C8 2.44772 8.44772 2 9 2C9.55228 2 10 2.44772 10 3Z" fill="currentColor"/>
+				<path d="M10 9C10 9.55228 9.55228 10 9 10C8.44772 10 8 9.55228 8 9C8 8.44772 8.44772 8 9 8C9.55228 8 10 8.44772 10 9Z" fill="currentColor"/>
+				<path d="M10 15C10 15.5523 9.55228 16 9 16C8.44772 16 8 15.5523 8 15C8 14.4477 8.44772 14 9 14C9.55228 14 10 14.4477 10 15Z" fill="currentColor"/>
+			</svg>
+		`;
+
+		let startY = 0;
+		let dragActive = false;
+		let items = [];
+		let draggedIndex = -1;
+		let draggedHeight = 0;
+
+		dragHandle.addEventListener("pointerdown", (event) => {
+			if (event.button !== 0) return;
+			event.preventDefault();
+
+			dragActive = true;
+			startY = event.clientY;
+
+			const children = Array.from(taskList.children);
+			draggedIndex = children.indexOf(row);
+			draggedHeight = row.offsetHeight;
+
+			items = children.map((child, index) => {
+				const rect = child.getBoundingClientRect();
+				return {
+					element: child,
+					index: index,
+					height: rect.height,
+					center: rect.top + rect.height / 2 + window.scrollY,
+				};
+			});
+
+			row.classList.add("is-dragging");
+			row.style.position = "relative";
+			row.style.zIndex = "1000";
+
+			if (navigator.vibrate) {
+				try {
+					navigator.vibrate(20);
+				} catch (e) {}
+			}
+
+			dragHandle.setPointerCapture(event.pointerId);
+		});
+
+		dragHandle.addEventListener("pointermove", (event) => {
+			if (!dragActive) return;
+			event.preventDefault();
+
+			const deltaY = event.clientY - startY;
+			row.style.transform = `translateY(${deltaY}px)`;
+
+			const initialCenter = items[draggedIndex].center;
+			const currentCenter = initialCenter + deltaY;
+
+			const otherItems = items.filter((item) => item.index !== draggedIndex);
+			let targetIndex = 0;
+			for (const item of otherItems) {
+				if (currentCenter > item.center) {
+					targetIndex++;
+				}
+			}
+
+			const listStyle = window.getComputedStyle(taskList);
+			const gap = parseFloat(listStyle.rowGap || listStyle.gap) || 14;
+
+			for (const item of items) {
+				if (item.index === draggedIndex) continue;
+
+				let transformY = 0;
+				if (item.index < draggedIndex) {
+					if (targetIndex <= item.index) {
+						transformY = draggedHeight + gap;
+					}
+				} else {
+					if (targetIndex >= item.index) {
+						transformY = -(draggedHeight + gap);
+					}
+				}
+
+				item.element.style.transform = transformY !== 0 ? `translateY(${transformY}px)` : "";
+			}
+		});
+
+		const endDrag = (event) => {
+			if (!dragActive) return;
+			dragActive = false;
+
+			try {
+				dragHandle.releasePointerCapture(event.pointerId);
+			} catch (e) {}
+
+			row.classList.remove("is-dragging");
+
+			const deltaY = event.clientY - startY;
+			const initialCenter = items[draggedIndex].center;
+			const currentCenter = initialCenter + deltaY;
+
+			const otherItems = items.filter((item) => item.index !== draggedIndex);
+			let targetIndex = 0;
+			for (const item of otherItems) {
+				if (currentCenter > item.center) {
+					targetIndex++;
+				}
+			}
+
+			for (const item of items) {
+				item.element.style.transform = "";
+				item.element.style.position = "";
+				item.element.style.zIndex = "";
+			}
+
+			if (targetIndex !== draggedIndex) {
+				const [movedTask] = tasks.splice(draggedIndex, 1);
+				tasks.splice(targetIndex, 0, movedTask);
+				persistTasks();
+			}
+
+			renderTasks();
+		};
+
+		dragHandle.addEventListener("pointerup", endDrag);
+		dragHandle.addEventListener("pointercancel", endDrag);
+
 		const statusButton = document.createElement("button");
 		statusButton.type = "button";
 		statusButton.className = "task-status";
@@ -476,7 +609,7 @@ function renderTasks() {
 
 		descriptionPanel.append(descriptionField);
 
-		row.append(statusButton, text, meta, descriptionPanel);
+		row.append(dragHandle, statusButton, text, meta, descriptionPanel);
 		fragment.appendChild(row);
 	}
 
@@ -586,6 +719,10 @@ taskList.addEventListener("click", (event) => {
 		return;
 	}
 
+	if (event.target.closest(".task-drag-handle")) {
+		return;
+	}
+
 	if (event.target.closest(".task-status")) {
 		cycleStatus(taskId);
 		return;
@@ -604,7 +741,7 @@ taskList.addEventListener("contextmenu", (event) => {
 		return;
 	}
 
-	if (event.target.closest(".task-status") || event.target.closest("textarea")) {
+	if (event.target.closest(".task-status") || event.target.closest("textarea") || event.target.closest(".task-drag-handle")) {
 		return;
 	}
 
@@ -621,7 +758,7 @@ taskList.addEventListener("touchstart", (event) => {
 		return;
 	}
 
-	if (event.target.closest(".task-status") || event.target.closest("textarea")) {
+	if (event.target.closest(".task-status") || event.target.closest("textarea") || event.target.closest(".task-drag-handle")) {
 		return;
 	}
 
