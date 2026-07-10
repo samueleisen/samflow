@@ -524,3 +524,278 @@ body.skill-page .content {
     border-color: rgba(77, 216, 255, 0.75);
     box-shadow: 0 0 0 3px rgba(77, 216, 255, 0.16);
 }
+
+/* ── Media upload inside rename dialog ──────────────────────────── */
+
+.skill-rename-dialog__media-section {
+    display: grid;
+    gap: 0.6rem;
+}
+
+.skill-rename-dialog__media-label {
+    font-size: 0.92rem;
+    font-weight: 600;
+}
+
+.skill-rename-dialog__media-row {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+}
+
+.skill-rename-dialog__file-input-wrap {
+    position: relative;
+    flex: 1 1 auto;
+}
+
+.skill-rename-dialog__file-input {
+    width: 100%;
+    box-sizing: border-box;
+    border-radius: 0.95rem;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-color);
+    padding: 0.55rem 0.75rem;
+    font: inherit;
+    font-size: 0.85rem;
+    cursor: pointer;
+    outline: none;
+}
+
+.skill-rename-dialog__file-input::file-selector-button {
+    appearance: none;
+    border: 1px solid rgba(77, 216, 255, 0.35);
+    border-radius: 999px;
+    background: rgba(77, 216, 255, 0.1);
+    color: var(--text-color);
+    padding: 0.35rem 0.75rem;
+    font: inherit;
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+    margin-right: 0.55rem;
+    transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.skill-rename-dialog__file-input::file-selector-button:hover {
+    background: rgba(77, 216, 255, 0.2);
+    border-color: rgba(77, 216, 255, 0.55);
+}
+
+.skill-rename-dialog__media-preview {
+    position: relative;
+    border-radius: 0.75rem;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(0, 0, 0, 0.25);
+    max-height: 10rem;
+    display: none;
+}
+
+.skill-rename-dialog__media-preview.has-media {
+    display: block;
+}
+
+.skill-rename-dialog__media-preview img,
+.skill-rename-dialog__media-preview video {
+    display: block;
+    width: 100%;
+    max-height: 10rem;
+    object-fit: contain;
+    border-radius: 0.65rem;
+}
+
+.skill-rename-dialog__media-remove {
+    position: absolute;
+    top: 0.35rem;
+    right: 0.35rem;
+    appearance: none;
+    border: none;
+    border-radius: 50%;
+    width: 1.6rem;
+    height: 1.6rem;
+    background: rgba(255, 60, 60, 0.85);
+    color: #fff;
+    font-size: 0.9rem;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 120ms ease, background-color 120ms ease;
+    z-index: 2;
+}
+
+.skill-rename-dialog__media-remove:hover {
+    transform: scale(1.12);
+    background: rgba(255, 40, 40, 1);
+}
+
+.skill-rename-dialog__media-uploading {
+    display: none;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.82rem;
+    color: rgba(77, 216, 255, 0.85);
+    font-weight: 600;
+    padding: 0.4rem 0;
+}
+
+.skill-rename-dialog__media-uploading.is-active {
+    display: flex;
+}
+
+.skill-rename-dialog__media-spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(77, 216, 255, 0.25);
+    border-top-color: rgba(77, 216, 255, 0.85);
+    border-radius: 50%;
+    animation: skill-spin 0.7s linear infinite;
+}
+
+@keyframes skill-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* ── Node detail window (right-click when edit OFF, desktop) ───── */
+
+.skill-detail-window {
+    position: absolute;
+    inset: 0;
+    z-index: 70;
+    display: grid;
+    place-items: center;
+}
+
+.skill-detail-window[hidden] {
+    display: none;
+}
+
+.skill-detail-window__backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(3, 5, 10, 0.58);
+    backdrop-filter: blur(6px);
+}
+
+.skill-detail-window__panel {
+    position: relative;
+    z-index: 1;
+    width: min(82vw, 32rem);
+    max-height: 80vh;
+    overflow-y: auto;
+    padding: 1.5rem 1.35rem 1.25rem;
+    border-radius: 1.4rem;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background:
+        linear-gradient(180deg, rgba(14, 18, 28, 0.98), rgba(8, 11, 18, 0.96)),
+        rgba(8, 12, 18, 0.96);
+    color: var(--text-color);
+    box-shadow:
+        0 24px 60px rgba(0, 0, 0, 0.42),
+        0 0 0 1px rgba(77, 216, 255, 0.08) inset;
+}
+
+.skill-detail-window__panel::-webkit-scrollbar {
+    width: 5px;
+}
+
+.skill-detail-window__panel::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.skill-detail-window__panel::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+}
+
+.skill-detail-window__close {
+    position: absolute;
+    top: 0.75rem;
+    right: 0.75rem;
+    appearance: none;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 50%;
+    width: 2rem;
+    height: 2rem;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-color);
+    font-size: 1rem;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 120ms ease, border-color 120ms ease, background-color 120ms ease;
+    z-index: 2;
+}
+
+.skill-detail-window__close:hover {
+    transform: scale(1.08);
+    border-color: rgba(77, 216, 255, 0.5);
+    background: rgba(77, 216, 255, 0.12);
+}
+
+.skill-detail-window__kicker {
+    margin: 0 0 0.35rem;
+    color: rgba(77, 216, 255, 0.88);
+    font-size: 0.76rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+}
+
+.skill-detail-window__title {
+    margin: 0 0 1rem;
+    font-size: 1.25rem;
+    line-height: 1.2;
+    padding-right: 2rem;
+}
+
+.skill-detail-window__media {
+    margin: 0 0 1rem;
+    border-radius: 0.75rem;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(0, 0, 0, 0.2);
+}
+
+.skill-detail-window__media:empty {
+    display: none;
+}
+
+.skill-detail-window__media img,
+.skill-detail-window__media video {
+    display: block;
+    width: 100%;
+    max-height: 22rem;
+    object-fit: contain;
+    border-radius: 0.65rem;
+}
+
+.skill-detail-window__desc-label {
+    margin: 0 0 0.3rem;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: rgba(77, 216, 255, 0.7);
+}
+
+.skill-detail-window__desc {
+    margin: 0;
+    white-space: pre-wrap;
+    font-size: 0.92rem;
+    line-height: 1.6;
+    color: rgba(244, 247, 251, 0.88);
+}
+
+.skill-detail-window__empty {
+    margin: 0;
+    font-size: 0.88rem;
+    color: rgba(244, 247, 251, 0.4);
+    font-style: italic;
+}

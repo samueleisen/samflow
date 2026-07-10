@@ -1,5 +1,29 @@
-import { database, ref, set, onValue, push, remove } from "./firebase-config.js";
-import { subscribeAuthState } from "./auth.js";
+import { ViewportCamera } from "./viewport-camera.js";
+import { SkillSync } from "./skill-sync.js";
+
+// ── Cloudinary configuration ──────────────────────────────────────
+// Fill in your Cloudinary cloud name and an unsigned upload preset.
+const CLOUDINARY_CLOUD_NAME = "dqgcrni5w";
+const CLOUDINARY_UPLOAD_PRESET = "umlrklxe";
+
+async function uploadToCloudinary(file) {
+	const url = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/auto/upload`;
+	const formData = new FormData();
+	formData.append("file", file);
+	formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
+
+	const response = await fetch(url, { method: "POST", body: formData });
+
+	if (!response.ok) {
+		throw new Error(`Cloudinary upload failed (${response.status})`);
+	}
+
+	const data = await response.json();
+	return {
+		url: data.secure_url,
+		resourceType: data.resource_type === "video" ? "video" : "image",
+	};
+}
 
 const viewportFrame = document.getElementById("viewport-frame");
 const canvas = document.getElementById("skill-canvas");
@@ -33,7 +57,7 @@ const minZoom = 0.25;
 const maxZoom = 2.5;
 const defaultZoom = 0.5;
 const wheelZoomIntensity = 0.0015;
-const nodeStates = ["activated","deactivated"];
+const nodeStates = ["activated", "deactivated"];
 const connectionStateColors = {
 	activated: "#ffffff",
 	deactivated: "#888888"
@@ -66,13 +90,6 @@ const guestDemoConnections = [
 		to: "-OtbqA8a_Y-9IibOCNOq",
 	},
 ];
-
-let nodesRef = null;
-let connectionsRef = null;
-let nodesUnsubscribe = null;
-let connectionsUnsubscribe = null;
-let currentUserId = null;
-let currentAuthUser = null;
 
 const connectionLayer = document.createElementNS(svgNs, "g");
 connectionLayer.setAttribute("id", "skill-connection-layer");
@@ -125,28 +142,45 @@ ensureConnectionMarkers();
 
 viewportFrame.tabIndex = 0;
 
+const camera = new ViewportCamera(viewportFrame, canvas, {
+	canvasSize,
+	minZoom,
+	maxZoom,
+	defaultZoom,
+	wheelZoomIntensity,
+	interactionThreshold
+});
+
+const clampPan = (x, y) => camera.clampPan(x, y);
+const updateCanvasTransform = () => camera.updateCanvasTransform();
+const setZoomAtViewportPoint = (vx, vy, z) => camera.setZoomAtViewportPoint(vx, vy, z);
+const centerCanvasView = () => camera.centerCanvasView();
+const refreshViewportBounds = () => camera.refreshViewportBounds();
+const getCanvasPoint = (e) => camera.getCanvasPoint(e.clientX, e.clientY);
+const getTouchPairDistance = (t1, t2) => camera.getTouchPairDistance(t1, t2);
+const getTouchPairCenter = (t1, t2) => camera.getTouchPairCenter(t1, t2);
+const cancelActivePanForPinch = () => {
+	camera.cancelActivePanForPinch();
+	pendingNodePointer = null;
+};
+
 let editMode = false;
 let deleteMode = false;
-let panX = 0;
-let panY = 0;
-let zoom = defaultZoom;
-let viewportBounds = viewportFrame.getBoundingClientRect();
 let firstSelectedNodeId = null;
 let selectedNodes = [];
 let activeRenameNodeId = null;
 let lastNodesDigest = "";
 let lastConnectionsDigest = "";
-let activePan = null;
 let pendingNodePointer = null;
 let activeNodeDrag = null;
 let activeResize = null;
-let activePinch = null;
 let latestNodesSource = null;
 let latestConnectionsSource = null;
 let historyUndoStack = [];
 let historyRedoStack = [];
 
 const historyLimit = 100;
+
 
 const interactionState = {
 	consumeClick: false,
@@ -165,6 +199,21 @@ renameDialog.innerHTML = `
 			<input id="skill-rename-input" class="skill-rename-dialog__input" type="text" maxlength="80" spellcheck="false" />
 			<label class="skill-rename-dialog__label skill-rename-dialog__label--desc" for="skill-desc-input">Description <span style="font-weight:400;opacity:0.55">(optional)</span></label>
 			<textarea id="skill-desc-input" class="skill-rename-dialog__textarea" maxlength="600" spellcheck="false" placeholder="Add a short note about this skill…"></textarea>
+			<div class="skill-rename-dialog__media-section">
+				<label class="skill-rename-dialog__media-label">Media <span style="font-weight:400;opacity:0.55">(image or video)</span></label>
+				<div class="skill-rename-dialog__media-row">
+					<div class="skill-rename-dialog__file-input-wrap">
+						<input id="skill-media-input" class="skill-rename-dialog__file-input" type="file" accept="image/*,video/*" />
+					</div>
+				</div>
+				<div id="skill-media-uploading" class="skill-rename-dialog__media-uploading">
+					<span class="skill-rename-dialog__media-spinner"></span>
+					<span>Uploading…</span>
+				</div>
+				<div id="skill-media-preview" class="skill-rename-dialog__media-preview">
+					<button type="button" id="skill-media-remove" class="skill-rename-dialog__media-remove" title="Remove media">✕</button>
+				</div>
+			</div>
 			<div class="skill-rename-dialog__actions">
 				<button type="button" class="skill-rename-dialog__button skill-rename-dialog__button--ghost" data-rename-cancel>Cancel</button>
 				<button type="submit" class="skill-rename-dialog__button">Save</button>
@@ -176,8 +225,55 @@ renameDialog.innerHTML = `
 const renameForm = renameDialog.querySelector(".skill-rename-dialog__form");
 const renameInput = renameDialog.querySelector("#skill-rename-input");
 const renameDescInput = renameDialog.querySelector("#skill-desc-input");
+const renameMediaInput = renameDialog.querySelector("#skill-media-input");
+const renameMediaPreview = renameDialog.querySelector("#skill-media-preview");
+const renameMediaUploading = renameDialog.querySelector("#skill-media-uploading");
+const renameMediaRemoveBtn = renameDialog.querySelector("#skill-media-remove");
 const renameCancelTargets = renameDialog.querySelectorAll("[data-rename-cancel]");
+
+// Tracks the staged media during a rename dialog session
+let renameMediaStaged = { url: "", type: "" };
+
 viewportFrame.appendChild(renameDialog);
+
+// ── Detail window (right-click when edit mode OFF, desktop) ──────
+const detailWindow = document.createElement("div");
+detailWindow.className = "skill-detail-window";
+detailWindow.hidden = true;
+detailWindow.innerHTML = `
+	<div class="skill-detail-window__backdrop" data-detail-close></div>
+	<div class="skill-detail-window__panel" role="dialog" aria-modal="true">
+		<button type="button" class="skill-detail-window__close" data-detail-close title="Close">✕</button>
+		<p class="skill-detail-window__kicker">Node Details</p>
+		<h2 class="skill-detail-window__title" id="skill-detail-title"></h2>
+		<div class="skill-detail-window__media" id="skill-detail-media"></div>
+		<div id="skill-detail-desc-section">
+			<p class="skill-detail-window__desc-label">Description</p>
+			<p class="skill-detail-window__desc" id="skill-detail-desc"></p>
+		</div>
+	</div>
+`;
+viewportFrame.appendChild(detailWindow);
+
+const detailTitle = detailWindow.querySelector("#skill-detail-title");
+const detailMedia = detailWindow.querySelector("#skill-detail-media");
+const detailDescSection = detailWindow.querySelector("#skill-detail-desc-section");
+const detailDesc = detailWindow.querySelector("#skill-detail-desc");
+
+// Bind close targets directly so clicks never bubble to viewportFrame handlers
+const detailCloseTargets = detailWindow.querySelectorAll("[data-detail-close]");
+for (const el of detailCloseTargets) {
+	el.addEventListener("click", (event) => {
+		event.stopPropagation();
+		closeDetailWindow();
+	});
+}
+
+// Stop clicks inside the panel from bubbling to the viewport
+const detailPanel = detailWindow.querySelector(".skill-detail-window__panel");
+detailPanel.addEventListener("click", (event) => {
+	event.stopPropagation();
+});
 
 // ── Description popup ──────────────────────────────────────────────
 const nodeDescPopup = document.createElement("div");
@@ -226,7 +322,7 @@ function canChangeStatus() {
 }
 
 function hasRemoteTreeSync() {
-	return Boolean(nodesRef && connectionsRef && currentUserId);
+	return skillSync.hasRemoteTreeSync();
 }
 
 function createLocalId(prefix) {
@@ -251,126 +347,125 @@ function escapeHtml(value) {
 }
 
 function computeNodeFontSize(title, nodeSize) {
-    const length = String(title ?? "").trim().length;
-    
-    // 1. Calculate a dynamic base that grows with the node, but has a higher minimum cap
-    const base = Math.max(14, Math.round(nodeSize * 0.18)); 
+	const length = String(title ?? "").trim().length;
 
-    // 2. Short Words (4 chars or less): Give them a scaling bonus instead of a limit
-    if (length <= 4) {
-        // Boosts the size for short words, maxing out at a clean 24px
-        return `${Math.min(Math.round(base * 1.3), 24)}px`;
-    }
+	// 1. Calculate a dynamic base that grows with the node, but has a higher minimum cap
+	const base = Math.max(14, Math.round(nodeSize * 0.18));
 
-    // 3. Long Words: Reduce font size gradually as length increases. Floor at 6px.
-    const excess = Math.max(0, length - 4);
-    
-    // Dropping by 3.5% per character makes the drop noticeable immediately
-    const scale = Math.max(0.45, 1 - (excess * 0.005)); 
-    const size = Math.max(6, Math.round(base * scale));
-    
-    return `${size}px`;
-// undo redo
+	// 2. Short Words (4 chars or less): Give them a scaling bonus instead of a limit
+	if (length <= 4) {
+		// Boosts the size for short words, maxing out at a clean 24px
+		return `${Math.min(Math.round(base * 1.3), 24)}px`;
+	}
+
+	// 3. Long Words: Reduce font size gradually as length increases. Floor at 6px.
+	const excess = Math.max(0, length - 4);
+
+	// Dropping by 3.5% per character makes the drop noticeable immediately
+	const scale = Math.max(0.45, 1 - (excess * 0.005));
+	const size = Math.max(6, Math.round(base * scale));
+
+	return `${size}px`;
+	// undo redo
 }
 
-	function cloneNodes(nodes) {
-		return nodes.map((node) => ({ ...node }));
+function cloneNodes(nodes) {
+	return nodes.map((node) => ({ ...node }));
+}
+
+function cloneConnections(connections) {
+	return connections.map((connection) => ({ ...connection }));
+}
+
+function serializeNodes(nodes) {
+	const serialized = {};
+
+	for (const node of nodes) {
+		serialized[node.id] = { ...node };
 	}
 
-	function cloneConnections(connections) {
-		return connections.map((connection) => ({ ...connection }));
+	return serialized;
+}
+
+function serializeConnections(connections) {
+	const serialized = {};
+
+	for (const connection of connections) {
+		serialized[connection.id] = { ...connection };
 	}
 
-	function serializeNodes(nodes) {
-		const serialized = {};
+	return serialized;
+}
 
-		for (const node of nodes) {
-			serialized[node.id] = { ...node };
-		}
+function captureTreeSnapshot() {
+	return {
+		nodes: cloneNodes(normalizeNodes(latestNodesSource)),
+		connections: cloneConnections(normalizeConnections(latestConnectionsSource)),
+	};
+}
 
-		return serialized;
+function pushHistorySnapshot(snapshot) {
+	historyUndoStack = [...historyUndoStack, snapshot].slice(-historyLimit);
+	historyRedoStack = [];
+}
+
+function resetHistory() {
+	historyUndoStack = [];
+	historyRedoStack = [];
+}
+
+function syncTreeSnapshot(snapshot) {
+	latestNodesSource = cloneNodes(snapshot.nodes);
+	latestConnectionsSource = cloneConnections(snapshot.connections);
+	lastNodesDigest = nodeDigest(latestNodesSource);
+	lastConnectionsDigest = connectionDigest(latestConnectionsSource);
+	firstSelectedNodeId = null;
+	clearSelectedNodes();
+	closeRenameDialog();
+	interactionState.consumeClick = false;
+	pendingNodePointer = null;
+	activeNodeDrag = null;
+	activeResize = null;
+	camera.activePan = null;
+	camera.activePinch = null;
+	renderScene();
+	updateControlsUi();
+
+	if (!skillSync.hasRemoteTreeSync()) {
+		return;
 	}
 
-	function serializeConnections(connections) {
-		const serialized = {};
+	skillSync.setTreeData(serializeNodes(latestNodesSource), serializeConnections(latestConnectionsSource));
+}
 
-		for (const connection of connections) {
-			serialized[connection.id] = { ...connection };
-		}
-
-		return serialized;
+function undoTreeChange() {
+	if (historyUndoStack.length === 0) {
+		return;
 	}
 
-	function captureTreeSnapshot() {
-		return {
-			nodes: cloneNodes(normalizeNodes(latestNodesSource)),
-			connections: cloneConnections(normalizeConnections(latestConnectionsSource)),
-		};
+	const snapshot = historyUndoStack.pop();
+	historyRedoStack.push(captureTreeSnapshot());
+	syncTreeSnapshot(snapshot);
+}
+
+function redoTreeChange() {
+	if (historyRedoStack.length === 0) {
+		return;
 	}
 
-	function pushHistorySnapshot(snapshot) {
-		historyUndoStack = [...historyUndoStack, snapshot].slice(-historyLimit);
-		historyRedoStack = [];
-	}
+	const snapshot = historyRedoStack.pop();
+	historyUndoStack.push(captureTreeSnapshot());
+	syncTreeSnapshot(snapshot);
+}
 
-	function resetHistory() {
-		historyUndoStack = [];
-		historyRedoStack = [];
-	}
-
-	function syncTreeSnapshot(snapshot) {
-		latestNodesSource = cloneNodes(snapshot.nodes);
-		latestConnectionsSource = cloneConnections(snapshot.connections);
-		lastNodesDigest = nodeDigest(latestNodesSource);
-		lastConnectionsDigest = connectionDigest(latestConnectionsSource);
-		firstSelectedNodeId = null;
-		clearSelectedNodes();
-		closeRenameDialog();
-		interactionState.consumeClick = false;
-		pendingNodePointer = null;
-		activeNodeDrag = null;
-		activeResize = null;
-		activePan = null;
-		activePinch = null;
-		renderScene();
-		updateControlsUi();
-
-		if (!nodesRef || !connectionsRef || !currentUserId) {
-			return;
-		}
-
-		set(nodesRef, serializeNodes(latestNodesSource));
-		set(connectionsRef, serializeConnections(latestConnectionsSource));
-	}
-
-	function undoTreeChange() {
-		if (historyUndoStack.length === 0) {
-			return;
-		}
-
-		const snapshot = historyUndoStack.pop();
-		historyRedoStack.push(captureTreeSnapshot());
-		syncTreeSnapshot(snapshot);
-	}
-
-	function redoTreeChange() {
-		if (historyRedoStack.length === 0) {
-			return;
-		}
-
-		const snapshot = historyRedoStack.pop();
-		historyUndoStack.push(captureTreeSnapshot());
-		syncTreeSnapshot(snapshot);
-	}
-
-	function isEditableShortcutTarget(target) {
-		return Boolean(
-			target &&
-			(typeof target.closest === "function"
-				? target.closest("input, textarea, select, [contenteditable='true']") || target.isContentEditable
-				: false),
-		);
-	}
+function isEditableShortcutTarget(target) {
+	return Boolean(
+		target &&
+		(typeof target.closest === "function"
+			? target.closest("input, textarea, select, [contenteditable='true']") || target.isContentEditable
+			: false),
+	);
+}
 
 function nodeDigest(nodes) {
 	return JSON.stringify(
@@ -381,6 +476,8 @@ function nodeDigest(nodes) {
 				id: node.id,
 				title: node.title,
 				description: node.description ?? "",
+				mediaUrl: node.mediaUrl ?? "",
+				mediaType: node.mediaType ?? "",
 				x: node.x,
 				y: node.y,
 				size: node.size,
@@ -402,99 +499,7 @@ function connectionDigest(connections) {
 	);
 }
 
-function clampPan(nextX, nextY) {
-	const scaledWidth = canvasSize * zoom;
-	const scaledHeight = canvasSize * zoom;
 
-	let minX;
-	let maxX;
-	let minY;
-	let maxY;
-
-	if (scaledWidth <= viewportBounds.width) {
-		const centeredX = (viewportBounds.width - scaledWidth) / 2;
-		minX = centeredX;
-		maxX = centeredX;
-	} else {
-		minX = viewportBounds.width - scaledWidth;
-		maxX = 0;
-	}
-
-	if (scaledHeight <= viewportBounds.height) {
-		const centeredY = (viewportBounds.height - scaledHeight) / 2;
-		minY = centeredY;
-		maxY = centeredY;
-	} else {
-		minY = viewportBounds.height - scaledHeight;
-		maxY = 0;
-	}
-
-	return {
-		x: clamp(nextX, minX, maxX),
-		y: clamp(nextY, minY, maxY),
-	};
-}
-
-function updateCanvasTransform() {
-	canvas.style.transform = `translate3d(${panX}px, ${panY}px, 0) scale(${zoom})`;
-}
-
-function setZoomAtViewportPoint(viewportX, viewportY, nextZoom) {
-	const clampedZoom = clamp(nextZoom, minZoom, maxZoom);
-	const canvasX = (viewportX - panX) / zoom;
-	const canvasY = (viewportY - panY) / zoom;
-
-	zoom = clampedZoom;
-	panX = viewportX - canvasX * zoom;
-	panY = viewportY - canvasY * zoom;
-
-	const clamped = clampPan(panX, panY);
-	panX = clamped.x;
-	panY = clamped.y;
-	updateCanvasTransform();
-}
-
-function centerCanvasView() {
-	const canvasCenter = canvasSize / 2;
-	panX = viewportBounds.width / 2 - canvasCenter * zoom;
-	panY = viewportBounds.height / 2 - canvasCenter * zoom;
-
-	const clamped = clampPan(panX, panY);
-	panX = clamped.x;
-	panY = clamped.y;
-	updateCanvasTransform();
-}
-
-function refreshViewportBounds() {
-	viewportBounds = viewportFrame.getBoundingClientRect();
-	const clamped = clampPan(panX, panY);
-	panX = clamped.x;
-	panY = clamped.y;
-	updateCanvasTransform();
-}
-
-function getCanvasPoint(event) {
-	return {
-		x: clamp((event.clientX - viewportBounds.left - panX) / zoom, 0, canvasSize),
-		y: clamp((event.clientY - viewportBounds.top - panY) / zoom, 0, canvasSize),
-	};
-}
-
-function getTouchPairDistance(firstTouch, secondTouch) {
-	return Math.hypot(secondTouch.clientX - firstTouch.clientX, secondTouch.clientY - firstTouch.clientY);
-}
-
-function getTouchPairCenter(firstTouch, secondTouch) {
-	return {
-		x: (firstTouch.clientX + secondTouch.clientX) / 2,
-		y: (firstTouch.clientY + secondTouch.clientY) / 2,
-	};
-}
-
-function cancelActivePanForPinch() {
-	activePan = null;
-	pendingNodePointer = null;
-}
 
 function coerceNode(candidate, fallbackId) {
 	if (!candidate || typeof candidate !== "object") {
@@ -513,11 +518,15 @@ function coerceNode(candidate, fallbackId) {
 	const state = nodeStates.includes(candidate.state) ? candidate.state : "deactivated";
 
 	const description = String(candidate.description ?? "").trim();
+	const mediaUrl = String(candidate.mediaUrl ?? "").trim();
+	const mediaType = ["image", "video"].includes(candidate.mediaType) ? candidate.mediaType : "";
 
 	return {
 		id: String(candidate.id ?? fallbackId),
 		title,
 		description,
+		mediaUrl,
+		mediaType,
 		x: Number.isFinite(x) ? x : canvasSize / 2,
 		y: Number.isFinite(y) ? y : canvasSize / 2,
 		size: Number.isFinite(size) ? clamp(size, minNodeSize, maxNodeSize) : defaultNodeSize,
@@ -650,7 +659,107 @@ function closeRenameDialog() {
 	renameDialog.hidden = true;
 	delete renameDialog.dataset.open;
 	interactionState.consumeClick = false;
+	// Reset media staging
+	renameMediaStaged = { url: "", type: "" };
+	renameMediaInput.value = "";
+	renameMediaPreview.classList.remove("has-media");
+	const existingEl = renameMediaPreview.querySelector("img, video");
+	if (existingEl) existingEl.remove();
+	renameMediaUploading.classList.remove("is-active");
 }
+
+function closeDetailWindow() {
+	detailWindow.hidden = true;
+	detailMedia.replaceChildren();
+}
+
+function openDetailWindow(nodeId) {
+	const node = normalizeNodes(latestNodesSource).find((entry) => entry.id === nodeId);
+	if (!node) return;
+
+	detailTitle.textContent = node.title;
+
+	// Media
+	detailMedia.replaceChildren();
+	if (node.mediaUrl) {
+		if (node.mediaType === "video") {
+			const vid = document.createElement("video");
+			vid.src = node.mediaUrl;
+			vid.controls = true;
+			vid.playsInline = true;
+			detailMedia.appendChild(vid);
+		} else {
+			const img = document.createElement("img");
+			img.src = node.mediaUrl;
+			img.alt = node.title;
+			img.draggable = false;
+			detailMedia.appendChild(img);
+		}
+	}
+
+	// Description
+	const desc = (node.description ?? "").trim();
+	if (desc) {
+		detailDescSection.style.display = "";
+		detailDesc.textContent = desc;
+	} else if (!node.mediaUrl) {
+		// Show "no content" message if neither media nor description
+		detailDescSection.style.display = "";
+		detailDesc.textContent = "";
+		const emptyMsg = document.createElement("p");
+		emptyMsg.className = "skill-detail-window__empty";
+		emptyMsg.textContent = "No description or media attached yet.";
+		detailDesc.appendChild(emptyMsg);
+	} else {
+		detailDescSection.style.display = "none";
+	}
+
+	detailWindow.hidden = false;
+}
+
+// ── Media upload handlers ─────────────────────────────────────────
+renameMediaInput.addEventListener("change", async () => {
+	const file = renameMediaInput.files?.[0];
+	if (!file) return;
+
+	renameMediaUploading.classList.add("is-active");
+	renameMediaPreview.classList.remove("has-media");
+	const existingEl = renameMediaPreview.querySelector("img, video");
+	if (existingEl) existingEl.remove();
+
+	try {
+		const result = await uploadToCloudinary(file);
+		renameMediaStaged = { url: result.url, type: result.resourceType };
+
+		if (result.resourceType === "video") {
+			const vid = document.createElement("video");
+			vid.src = result.url;
+			vid.controls = true;
+			vid.playsInline = true;
+			renameMediaPreview.appendChild(vid);
+		} else {
+			const img = document.createElement("img");
+			img.src = result.url;
+			img.alt = "Uploaded media";
+			img.draggable = false;
+			renameMediaPreview.appendChild(img);
+		}
+		renameMediaPreview.classList.add("has-media");
+	} catch (err) {
+		console.error("Media upload failed:", err);
+		alert("Upload failed. Please try again.");
+	} finally {
+		renameMediaUploading.classList.remove("is-active");
+	}
+});
+
+renameMediaRemoveBtn.addEventListener("click", () => {
+	renameMediaStaged = { url: "", type: "" };
+	renameMediaInput.value = "";
+	renameMediaPreview.classList.remove("has-media");
+	const el = renameMediaPreview.querySelector("img, video");
+	if (el) el.remove();
+});
 
 function openRenameDialog(nodeId) {
 	if (!canModifyStructure()) {
@@ -666,6 +775,32 @@ function openRenameDialog(nodeId) {
 	activeRenameNodeId = node.id;
 	renameInput.value = node.title;
 	renameDescInput.value = node.description ?? "";
+
+	// Populate media preview from existing node data
+	renameMediaStaged = { url: node.mediaUrl ?? "", type: node.mediaType ?? "" };
+	renameMediaInput.value = "";
+	const existingMediaEl = renameMediaPreview.querySelector("img, video");
+	if (existingMediaEl) existingMediaEl.remove();
+
+	if (renameMediaStaged.url) {
+		if (renameMediaStaged.type === "video") {
+			const vid = document.createElement("video");
+			vid.src = renameMediaStaged.url;
+			vid.controls = true;
+			vid.playsInline = true;
+			renameMediaPreview.appendChild(vid);
+		} else {
+			const img = document.createElement("img");
+			img.src = renameMediaStaged.url;
+			img.alt = "Current media";
+			img.draggable = false;
+			renameMediaPreview.appendChild(img);
+		}
+		renameMediaPreview.classList.add("has-media");
+	} else {
+		renameMediaPreview.classList.remove("has-media");
+	}
+
 	renameDialog.hidden = false;
 	renameDialog.dataset.open = "true";
 	renameInput.focus();
@@ -684,6 +819,8 @@ function saveRenameDialog() {
 	}
 
 	const nextDescription = String(renameDescInput.value ?? "").trim();
+	const nextMediaUrl = renameMediaStaged.url;
+	const nextMediaType = renameMediaStaged.type;
 
 	const node = normalizeNodes(latestNodesSource).find((entry) => entry.id === activeRenameNodeId);
 
@@ -692,7 +829,11 @@ function saveRenameDialog() {
 		return;
 	}
 
-	if (node.title === nextTitle && (node.description ?? "") === nextDescription) {
+	const titleSame = node.title === nextTitle;
+	const descSame = (node.description ?? "") === nextDescription;
+	const mediaSame = (node.mediaUrl ?? "") === nextMediaUrl && (node.mediaType ?? "") === nextMediaType;
+
+	if (titleSame && descSame && mediaSame) {
 		closeRenameDialog();
 		return;
 	}
@@ -703,6 +844,8 @@ function saveRenameDialog() {
 		...node,
 		title: nextTitle,
 		description: nextDescription,
+		mediaUrl: nextMediaUrl,
+		mediaType: nextMediaType,
 		updatedAt: nowStamp(),
 	};
 
@@ -872,57 +1015,57 @@ function renderNodes(nodes) {
 	const modifying = canModifyStructure();
 	const deleting = canDelete();
 	const isMobile = !isDesktopLayout();
-	nodeLayer.replaceChildren();
 
+	// 1. Map existing children by nodeId
+	const existingEls = new Map();
+	for (const child of nodeLayer.children) {
+		const nodeId = child.dataset.nodeId;
+		if (nodeId) {
+			existingEls.set(nodeId, child);
+		}
+	}
+
+	const activeIds = new Set();
+
+	// 2. Loop through nodes to update or create
 	for (const nodeData of nodes) {
-		const node = document.createElement("button");
-		node.type = "button";
-		node.className = `skill-node state-${nodeData.state}`;
-		node.dataset.nodeId = nodeData.id;
-		node.style.width = `${nodeData.size}px`;
-		node.style.height = `${nodeData.size}px`;
-		node.style.left = `${nodeData.x - nodeData.size / 2}px`;
-		node.style.top = `${nodeData.y - nodeData.size / 2}px`;
-		node.setAttribute("aria-label", `${nodeData.title}, status ${nodeData.state}`);
-		node.innerHTML = `
-			<span class="skill-node__label">${escapeHtml(nodeData.title)}</span>
-			${modifying ? '<span class="skill-node__resize" aria-hidden="true"></span>' : ""}
-		`;
+		activeIds.add(nodeData.id);
+		let node = existingEls.get(nodeData.id);
 
-		// Apply computed font size based on title length and node size
-		const labelEl = node.querySelector('.skill-node__label');
-		if (labelEl) {
-			labelEl.style.fontSize = computeNodeFontSize(nodeData.title, nodeData.size);
-		}
+		if (!node) {
+			// CREATE NODE
+			node = document.createElement("button");
+			node.type = "button";
+			node.dataset.nodeId = nodeData.id;
 
-		if (deleting) {
-			node.classList.add("is-deletable");
-		}
-
-		// ── Description: desktop hover ───────────────────────────────
-		if (!isMobile) {
+			// Attach listeners once
 			node.addEventListener("mouseenter", () => {
-				if ((nodeData.description ?? "").trim()) {
-					showNodeDesc(nodeData.id, node);
+				const data = node._nodeData;
+				const isMobileDevice = !isDesktopLayout();
+				if (!isMobileDevice && data && (data.description ?? "").trim()) {
+					showNodeDesc(data.id, node);
 				}
 			});
 
 			node.addEventListener("mouseleave", () => {
-				if (activeDescNodeId === nodeData.id) {
+				const data = node._nodeData;
+				const isMobileDevice = !isDesktopLayout();
+				if (!isMobileDevice && data && activeDescNodeId === data.id) {
 					hideNodeDesc();
 				}
 			});
-		}
 
-		// ── Description: mobile long-press (500 ms) ──────────────────
-		if (isMobile) {
 			node.addEventListener("touchstart", (event) => {
-				if (!(nodeData.description ?? "").trim()) return;
+				const data = node._nodeData;
+				const isMobileDevice = !isDesktopLayout();
+				if (!isMobileDevice || !data) return;
+				if (!(data.description ?? "").trim() && !data.mediaUrl) return;
 				descLongPressActive = false;
 				if (descLongPressTimer) clearTimeout(descLongPressTimer);
 				descLongPressTimer = setTimeout(() => {
 					descLongPressActive = true;
-					showNodeDesc(nodeData.id, node);
+					hideNodeDesc(true);
+					openDetailWindow(data.id);
 				}, 500);
 			}, { passive: true });
 
@@ -934,93 +1077,145 @@ function renderNodes(nodes) {
 			}, { passive: true });
 
 			node.addEventListener("touchmove", () => {
-				// Cancel long press if finger moves
 				if (descLongPressTimer) {
 					clearTimeout(descLongPressTimer);
 					descLongPressTimer = null;
 				}
 			}, { passive: true });
+
+			node.addEventListener("contextmenu", (event) => {
+				const data = node._nodeData;
+				if (!data) return;
+
+				// Edit mode ON → open rename dialog
+				if (canModifyStructure()) {
+					event.preventDefault();
+					event.stopPropagation();
+					hideNodeDesc(true);
+					openRenameDialog(data.id);
+					return;
+				}
+
+				// Desktop, edit mode OFF → open detail window
+				if (isDesktopLayout() && !editMode) {
+					event.preventDefault();
+					event.stopPropagation();
+					hideNodeDesc(true);
+					openDetailWindow(data.id);
+				}
+			});
+
+			node.addEventListener("pointerdown", (event) => {
+				const data = node._nodeData;
+				if (!canEditStructure() || event.button !== 0 || !data) {
+					return;
+				}
+				if (event.shiftKey) {
+					event.stopPropagation();
+					toggleSelectedNode(data.id);
+					interactionState.consumeClick = true;
+					return;
+				}
+				event.stopPropagation();
+				if (canDelete()) {
+					beginNodePointer(data.id, event, "delete");
+					return;
+				}
+				if (!canModifyStructure()) {
+					return;
+				}
+				const resizeHandle = event.target.closest(".skill-node__resize");
+				beginNodePointer(data.id, event, resizeHandle ? "resize" : "drag");
+			});
+
+			node.addEventListener("click", (event) => {
+				const data = node._nodeData;
+				if (!data) return;
+				event.stopPropagation();
+				if (descLongPressActive) {
+					descLongPressActive = false;
+					return;
+				}
+				if (interactionState.consumeClick) {
+					interactionState.consumeClick = false;
+					return;
+				}
+				if (canDelete()) {
+					deleteNode(data.id);
+					return;
+				}
+				if (canEditStructure()) {
+					return;
+				}
+				event.preventDefault();
+				if (canChangeStatus()) {
+					cycleNodeStatus(data.id);
+				}
+			});
+
+			node.addEventListener("dblclick", (event) => {
+				const data = node._nodeData;
+				if (!data) return;
+				if (!canModifyStructure()) {
+					return;
+				}
+				if (interactionState.consumeClick) {
+					return;
+				}
+				event.preventDefault();
+				event.stopPropagation();
+				firstSelectedNodeId = null;
+				renderSelection();
+				cycleNodeStatus(data.id);
+			});
+
+			nodeLayer.appendChild(node);
 		}
 
-		node.addEventListener("contextmenu", (event) => {
-			if (!canModifyStructure()) {
-				return;
+		// UPDATE STATE AND STYLES
+		node._nodeData = nodeData;
+		node.className = `skill-node state-${nodeData.state}${deleting ? " is-deletable" : ""}`;
+		node.style.width = `${nodeData.size}px`;
+		node.style.height = `${nodeData.size}px`;
+		node.style.left = `${nodeData.x - nodeData.size / 2}px`;
+		node.style.top = `${nodeData.y - nodeData.size / 2}px`;
+		node.setAttribute("aria-label", `${nodeData.title}, status ${nodeData.state}`);
+
+		// Update or create label
+		let labelEl = node.querySelector('.skill-node__label');
+		if (!labelEl) {
+			labelEl = document.createElement("span");
+			labelEl.className = "skill-node__label";
+			node.appendChild(labelEl);
+		}
+
+		const titleEscaped = escapeHtml(nodeData.title);
+		if (labelEl.innerHTML !== titleEscaped) {
+			labelEl.innerHTML = titleEscaped;
+		}
+		labelEl.style.fontSize = computeNodeFontSize(nodeData.title, nodeData.size);
+
+		// Update or create resize handle
+		let resizeEl = node.querySelector('.skill-node__resize');
+		if (modifying) {
+			if (!resizeEl) {
+				resizeEl = document.createElement("span");
+				resizeEl.className = "skill-node__resize";
+				resizeEl.setAttribute("aria-hidden", "true");
+				node.appendChild(resizeEl);
 			}
-
-			event.preventDefault();
-			event.stopPropagation();
-			hideNodeDesc(true);
-			openRenameDialog(nodeData.id);
-		});
-
-		node.addEventListener("pointerdown", (event) => {
-			if (!structureEditing || event.button !== 0) {
-				return;
+		} else {
+			if (resizeEl) {
+				resizeEl.remove();
 			}
+		}
+	}
 
-			if (event.shiftKey) {
-				event.stopPropagation();
-				toggleSelectedNode(nodeData.id);
-				interactionState.consumeClick = true;
-				return;
-			}
-
-			event.stopPropagation();
-
-			if (deleting) {
-				beginNodePointer(nodeData.id, event, "delete");
-				return;
-			}
-
-			if (!modifying) {
-				return;
-			}
-
-			const resizeHandle = event.target.closest(".skill-node__resize");
-			beginNodePointer(nodeData.id, event, resizeHandle ? "resize" : "drag");
-		});
-
-		node.addEventListener("click", (event) => {
-			event.stopPropagation();
-
-			if (interactionState.consumeClick) {
-				interactionState.consumeClick = false;
-				return;
-			}
-
-			if (deleting) {
-				deleteNode(nodeData.id);
-				return;
-			}
-
-			if (structureEditing) {
-				return;
-			}
-
-			event.preventDefault();
-
-			if (canChangeStatus()) {
-				cycleNodeStatus(nodeData.id);
-			}
-		});
-
-		node.addEventListener("dblclick", (event) => {
-			if (!modifying) {
-				return;
-			}
-
-			if (interactionState.consumeClick) {
-				return;
-			}
-
-			event.preventDefault();
-			event.stopPropagation();
-			firstSelectedNodeId = null;
-			renderSelection();
-			cycleNodeStatus(nodeData.id);
-		});
-
-		nodeLayer.appendChild(node);
+	// 3. Remove obsolete nodes
+	for (const [nodeId, childEl] of existingEls) {
+		if (!activeIds.has(nodeId)) {
+			childEl.remove();
+		}
 	}
 
 	renderSelection();
@@ -1035,11 +1230,7 @@ function renderScene() {
 }
 
 function persistNode(node) {
-	if (!hasRemoteTreeSync()) {
-		return;
-	}
-
-	set(ref(database, `users/${currentUserId}/skillTree/nodes/${node.id}`), node);
+	skillSync.persistNode(node);
 }
 // removal
 function removeConnectionFromLocalState(connectionId) {
@@ -1050,8 +1241,9 @@ function removeConnectionFromLocalState(connectionId) {
 }
 
 function deleteNode(nodeId) {
+	pushHistorySnapshot(captureTreeSnapshot());
+
 	if (!hasRemoteTreeSync()) {
-		pushHistorySnapshot(captureTreeSnapshot());
 		latestNodesSource = normalizeNodes(latestNodesSource).filter((node) => node.id !== nodeId);
 		latestConnectionsSource = normalizeConnections(latestConnectionsSource).filter(
 			(connection) => connection.from !== nodeId && connection.to !== nodeId,
@@ -1071,12 +1263,7 @@ function deleteNode(nodeId) {
 		return;
 	}
 
-	if (!nodesRef || !currentUserId) {
-		return;
-	}
-
-	pushHistorySnapshot(captureTreeSnapshot());
-	remove(ref(database, `users/${currentUserId}/skillTree/nodes/${nodeId}`));
+	skillSync.deleteNode(nodeId);
 
 	for (const connection of normalizeConnections(latestConnectionsSource)) {
 		if (connection.from === nodeId || connection.to === nodeId) {
@@ -1096,30 +1283,20 @@ function deleteNode(nodeId) {
 }
 
 function deleteConnection(connectionId, skipHistory = false) {
-	if (!hasRemoteTreeSync()) {
-		if (!skipHistory) {
-			pushHistorySnapshot(captureTreeSnapshot());
-		}
-
-		removeConnectionFromLocalState(connectionId);
-		return;
-	}
-
-	if (!connectionsRef || !currentUserId) {
-		return;
-	}
-
 	if (!skipHistory) {
 		pushHistorySnapshot(captureTreeSnapshot());
 	}
 
 	removeConnectionFromLocalState(connectionId);
-	remove(ref(database, `users/${currentUserId}/skillTree/connections/${connectionId}`));
+
+	if (hasRemoteTreeSync()) {
+		skillSync.deleteConnection(connectionId);
+	}
 }
 
 function updateControlsUi() {
 	const desktop = isDesktopLayout();
-	const signedIn = Boolean(currentAuthUser);
+	const signedIn = Boolean(skillSync.currentAuthUser);
 	viewportFrame.classList.toggle("is-desktop", desktop);
 	viewportFrame.classList.toggle("is-mobile", !desktop);
 	viewportFrame.classList.toggle("is-editing", canModifyStructure());
@@ -1209,9 +1386,7 @@ function handleNodeSelection(nodeId) {
 		pushHistorySnapshot(captureTreeSnapshot());
 
 		if (hasRemoteTreeSync()) {
-			const connectionRef = push(connectionsRef);
-			set(connectionRef, {
-				id: connectionRef.key,
+			skillSync.pushNewConnection({
 				from: firstSelectedNodeId,
 				to: nodeId,
 				createdAt: nowStamp(),
@@ -1311,14 +1486,7 @@ function pointerMovedBeyondThreshold(event, startX, startY) {
 }
 
 function beginPan(event) {
-	activePan = {
-		pointerId: event.pointerId,
-		startClientX: event.clientX,
-		startClientY: event.clientY,
-		originX: panX,
-		originY: panY,
-		moved: false,
-	};
+	camera.beginPan(event);
 	interactionState.consumeClick = false;
 	viewportFrame.setPointerCapture(event.pointerId);
 }
@@ -1353,9 +1521,7 @@ function createNodeAtEvent(event) {
 	};
 
 	if (hasRemoteTreeSync()) {
-		const nodeRef = push(nodesRef);
-		node.id = nodeRef.key;
-		set(nodeRef, node);
+		skillSync.pushNewNode(node);
 	} else {
 		latestNodesSource = upsertNode(latestNodesSource, node);
 		renderScene();
@@ -1375,11 +1541,11 @@ function finishPointerInteraction(event) {
 		pendingNodePointer = null;
 	}
 
-	if (activePan && activePan.pointerId === event.pointerId) {
-		interactionState.consumeClick = activePan.moved;
-		activePan = null;
+	if (camera.activePan && camera.activePan.pointerId === event.pointerId) {
+		interactionState.consumeClick = camera.activePan.moved;
+		camera.activePan = null;
 	}
-// multi
+	// multi
 	if (activeNodeDrag && activeNodeDrag.pointerId === event.pointerId) {
 		interactionState.consumeClick = activeNodeDrag.moved;
 		if (activeNodeDrag.moved) {
@@ -1435,11 +1601,11 @@ function finishPointerInteraction(event) {
 }
 
 viewportFrame.addEventListener("pointerdown", (event) => {
-	if (activePinch || event.button !== 0 || canEditStructure() || canDelete()) {
+	if (camera.activePinch || event.button !== 0 || canEditStructure() || canDelete()) {
 		return;
 	}
 
-	if (event.target.closest(".skill-controls, .skill-node, .skill-node__resize")) {
+	if (event.target.closest(".skill-controls, .skill-node, .skill-node__resize, .skill-detail-window, .skill-rename-dialog")) {
 		return;
 	}
 
@@ -1447,7 +1613,7 @@ viewportFrame.addEventListener("pointerdown", (event) => {
 });
 
 viewportFrame.addEventListener("pointermove", (event) => {
-	if (activePinch) {
+	if (camera.activePinch) {
 		return;
 	}
 
@@ -1462,18 +1628,18 @@ viewportFrame.addEventListener("pointermove", (event) => {
 		promotePendingNodePointer(event);
 	}
 
-	if (activePan && activePan.pointerId === event.pointerId) {
-		const deltaX = event.clientX - activePan.startClientX;
-		const deltaY = event.clientY - activePan.startClientY;
+	if (camera.activePan && camera.activePan.pointerId === event.pointerId) {
+		const deltaX = event.clientX - camera.activePan.startClientX;
+		const deltaY = event.clientY - camera.activePan.startClientY;
 
 		if (Math.abs(deltaX) > interactionThreshold || Math.abs(deltaY) > interactionThreshold) {
-			activePan.moved = true;
+			camera.activePan.moved = true;
 		}
 
-		const clamped = clampPan(activePan.originX + deltaX, activePan.originY + deltaY);
-		panX = clamped.x;
-		panY = clamped.y;
-		updateCanvasTransform();
+		const clamped = camera.clampPan(camera.activePan.originX + deltaX, camera.activePan.originY + deltaY);
+		camera.panX = clamped.x;
+		camera.panY = clamped.y;
+		camera.updateCanvasTransform();
 	}
 
 	if (activeNodeDrag && activeNodeDrag.pointerId === event.pointerId) {
@@ -1491,7 +1657,7 @@ viewportFrame.addEventListener("pointermove", (event) => {
 		if (!activeNodeDrag.moved) {
 			return;
 		}
-// multi
+		// multi
 		const nextNodes = normalizeNodes(latestNodesSource);
 		const nodeIds = activeNodeDrag.selectedNodeIds ?? [activeNodeDrag.nodeId];
 		const originLookup = activeNodeDrag.selectedNodeOrigins ?? new Map([[activeNodeDrag.nodeId, { x: activeNodeDrag.originX, y: activeNodeDrag.originY }]]);
@@ -1547,11 +1713,17 @@ viewportFrame.addEventListener(
 			return;
 		}
 
+		// Don't hijack scroll when a dialog/detail window is open
+		// (the panel itself can scroll if content is long)
+		if (!detailWindow.hidden || !renameDialog.hidden) {
+			return;
+		}
+
 		event.preventDefault();
-		const viewportX = event.clientX - viewportBounds.left;
-		const viewportY = event.clientY - viewportBounds.top;
+		const viewportX = event.clientX - camera.viewportBounds.left;
+		const viewportY = event.clientY - camera.viewportBounds.top;
 		const zoomFactor = Math.exp(-event.deltaY * wheelZoomIntensity);
-		setZoomAtViewportPoint(viewportX, viewportY, zoom * zoomFactor);
+		camera.setZoomAtViewportPoint(viewportX, viewportY, camera.zoom * zoomFactor);
 	},
 	{ passive: false },
 );
@@ -1599,7 +1771,7 @@ viewportFrame.addEventListener(
 			return;
 		}
 
-		if (event.target.closest(".skill-controls, .page-nav-arrow")) {
+		if (event.target.closest(".skill-controls, .page-nav-arrow, .skill-detail-window, .skill-rename-dialog")) {
 			return;
 		}
 
@@ -1609,9 +1781,9 @@ viewportFrame.addEventListener(
 		const firstTouch = event.touches[0];
 		const secondTouch = event.touches[1];
 
-		activePinch = {
+		camera.activePinch = {
 			startDistance: getTouchPairDistance(firstTouch, secondTouch),
-			startZoom: zoom,
+			startZoom: camera.zoom,
 		};
 	},
 	{ passive: false },
@@ -1620,7 +1792,7 @@ viewportFrame.addEventListener(
 viewportFrame.addEventListener(
 	"touchmove",
 	(event) => {
-		if (!activePinch || event.touches.length < 2) {
+		if (!camera.activePinch || event.touches.length < 2) {
 			return;
 		}
 
@@ -1630,11 +1802,11 @@ viewportFrame.addEventListener(
 		const secondTouch = event.touches[1];
 		const distance = getTouchPairDistance(firstTouch, secondTouch);
 		const center = getTouchPairCenter(firstTouch, secondTouch);
-		const viewportX = center.x - viewportBounds.left;
-		const viewportY = center.y - viewportBounds.top;
-		const nextZoom = activePinch.startZoom * (distance / activePinch.startDistance);
+		const viewportX = center.x - camera.viewportBounds.left;
+		const viewportY = center.y - camera.viewportBounds.top;
+		const nextZoom = camera.activePinch.startZoom * (distance / camera.activePinch.startDistance);
 
-		setZoomAtViewportPoint(viewportX, viewportY, nextZoom);
+		camera.setZoomAtViewportPoint(viewportX, viewportY, nextZoom);
 	},
 	{ passive: false },
 );
@@ -1644,7 +1816,7 @@ function finishTouchZoom(event) {
 		return;
 	}
 
-	activePinch = null;
+	camera.activePinch = null;
 }
 
 viewportFrame.addEventListener("touchend", finishTouchZoom);
@@ -1655,7 +1827,7 @@ viewportFrame.addEventListener("click", (event) => {
 		return;
 	}
 
-	if (event.target.closest(".skill-rename-dialog")) {
+	if (event.target.closest(".skill-rename-dialog, .skill-detail-window")) {
 		return;
 	}
 
@@ -1695,6 +1867,11 @@ toggleDeleteBtn.addEventListener("click", () => {
 
 viewportFrame.addEventListener("keydown", (event) => {
 	if (event.key === "Escape") {
+		if (!detailWindow.hidden) {
+			closeDetailWindow();
+			return;
+		}
+
 		if (!renameDialog.hidden) {
 			closeRenameDialog();
 			return;
@@ -1732,6 +1909,7 @@ renameInput.addEventListener("keydown", (event) => {
 function handleLayoutChange() {
 	if (!isDesktopLayout()) {
 		closeRenameDialog();
+		closeDetailWindow();
 		editMode = false;
 		deleteMode = false;
 		clearSelectedNodes();
@@ -1745,58 +1923,9 @@ function handleLayoutChange() {
 desktopQuery.addEventListener("change", handleLayoutChange);
 window.addEventListener("resize", refreshViewportBounds);
 
-function disconnectSkillSync() {
-	if (typeof nodesUnsubscribe === "function") {
-		nodesUnsubscribe();
-	}
-
-	if (typeof connectionsUnsubscribe === "function") {
-		connectionsUnsubscribe();
-	}
-
-	nodesUnsubscribe = null;
-	connectionsUnsubscribe = null;
-	nodesRef = null;
-	connectionsRef = null;
-	currentUserId = null;
-	lastNodesDigest = "";
-	lastConnectionsDigest = "";
-	resetHistory();
-}
-
-function resetSkillState() {
-	latestNodesSource = cloneGuestDemoNodes();
-	latestConnectionsSource = cloneGuestDemoConnections();
-	firstSelectedNodeId = null;
-	clearSelectedNodes();
-	closeRenameDialog();
-	editMode = false;
-	deleteMode = false;
-	resetHistory();
-	lastNodesDigest = nodeDigest(latestNodesSource);
-	lastConnectionsDigest = connectionDigest(latestConnectionsSource);
-	updateControlsUi();
-	renderScene();
-}
-
-function connectSkillSyncForUser(user) {
-	disconnectSkillSync();
-
-	if (!user) {
-		currentAuthUser = null;
-		resetSkillState();
-		updateControlsUi();
-		renderScene();
-		return;
-	}
-
-	currentAuthUser = user;
-	currentUserId = user.uid;
-	nodesRef = ref(database, `users/${user.uid}/skillTree/nodes`);
-	connectionsRef = ref(database, `users/${user.uid}/skillTree/connections`);
-
-	nodesUnsubscribe = onValue(nodesRef, (snapshot) => {
-		const incoming = normalizeNodes(snapshot.val());
+const skillSync = new SkillSync({
+	onNodesUpdate: (val) => {
+		const incoming = normalizeNodes(val);
 		const digest = nodeDigest(incoming);
 
 		latestNodesSource = incoming;
@@ -1810,10 +1939,9 @@ function connectSkillSyncForUser(user) {
 			firstSelectedNodeId = null;
 		}
 		renderScene();
-	});
-
-	connectionsUnsubscribe = onValue(connectionsRef, (snapshot) => {
-		const incoming = normalizeConnections(snapshot.val());
+	},
+	onConnectionsUpdate: (val) => {
+		const incoming = normalizeConnections(val);
 		const digest = connectionDigest(incoming);
 
 		latestConnectionsSource = incoming;
@@ -1824,29 +1952,33 @@ function connectSkillSyncForUser(user) {
 
 		lastConnectionsDigest = digest;
 		renderScene();
-	});
-
-	updateControlsUi();
-}
-
-subscribeAuthState((state) => {
-	if (!state.ready) {
-		return;
-	}
-
-	if (!state.user) {
-		connectSkillSyncForUser(null);
-		return;
-	}
-
-	if (currentUserId === state.user.uid && nodesRef && connectionsRef) {
-		currentAuthUser = state.user;
+	},
+	onAuthStateChange: (user) => {
+		if (!user) {
+			latestNodesSource = cloneGuestDemoNodes();
+			latestConnectionsSource = cloneGuestDemoConnections();
+			firstSelectedNodeId = null;
+			clearSelectedNodes();
+			closeRenameDialog();
+			editMode = false;
+			deleteMode = false;
+			resetHistory();
+			lastNodesDigest = nodeDigest(latestNodesSource);
+			lastConnectionsDigest = connectionDigest(latestConnectionsSource);
+		}
 		updateControlsUi();
-		return;
+		renderScene();
 	}
-
-	connectSkillSyncForUser(state.user);
 });
+
+// Prevent browser default drag-and-drop actions on media to avoid input freeze bugs
+window.addEventListener("dragstart", (event) => {
+	if (event.target.tagName === "IMG" || event.target.tagName === "VIDEO") {
+		event.preventDefault();
+	}
+});
+
+skillSync.init();
 
 refreshViewportBounds();
 centerCanvasView();
