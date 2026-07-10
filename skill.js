@@ -1,6 +1,30 @@
 import { ViewportCamera } from "./viewport-camera.js";
 import { SkillSync } from "./skill-sync.js";
 
+// ── Cloudinary configuration ──────────────────────────────────────
+// Fill in your Cloudinary cloud name and an unsigned upload preset.
+const CLOUDINARY_CLOUD_NAME = "dqgcrni5w";
+const CLOUDINARY_UPLOAD_PRESET = "umlrklxe";
+
+async function uploadToCloudinary(file) {
+	const url = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/auto/upload`;
+	const formData = new FormData();
+	formData.append("file", file);
+	formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
+
+	const response = await fetch(url, { method: "POST", body: formData });
+
+	if (!response.ok) {
+		throw new Error(`Cloudinary upload failed (${response.status})`);
+	}
+
+	const data = await response.json();
+	return {
+		url: data.secure_url,
+		resourceType: data.resource_type === "video" ? "video" : "image",
+	};
+}
+
 const viewportFrame = document.getElementById("viewport-frame");
 const canvas = document.getElementById("skill-canvas");
 const nodeLayer = document.getElementById("skill-node-layer");
@@ -33,7 +57,7 @@ const minZoom = 0.25;
 const maxZoom = 2.5;
 const defaultZoom = 0.5;
 const wheelZoomIntensity = 0.0015;
-const nodeStates = ["activated","deactivated"];
+const nodeStates = ["activated", "deactivated"];
 const connectionStateColors = {
 	activated: "#ffffff",
 	deactivated: "#888888"
@@ -175,6 +199,21 @@ renameDialog.innerHTML = `
 			<input id="skill-rename-input" class="skill-rename-dialog__input" type="text" maxlength="80" spellcheck="false" />
 			<label class="skill-rename-dialog__label skill-rename-dialog__label--desc" for="skill-desc-input">Description <span style="font-weight:400;opacity:0.55">(optional)</span></label>
 			<textarea id="skill-desc-input" class="skill-rename-dialog__textarea" maxlength="600" spellcheck="false" placeholder="Add a short note about this skill…"></textarea>
+			<div class="skill-rename-dialog__media-section">
+				<label class="skill-rename-dialog__media-label">Media <span style="font-weight:400;opacity:0.55">(image or video)</span></label>
+				<div class="skill-rename-dialog__media-row">
+					<div class="skill-rename-dialog__file-input-wrap">
+						<input id="skill-media-input" class="skill-rename-dialog__file-input" type="file" accept="image/*,video/*" />
+					</div>
+				</div>
+				<div id="skill-media-uploading" class="skill-rename-dialog__media-uploading">
+					<span class="skill-rename-dialog__media-spinner"></span>
+					<span>Uploading…</span>
+				</div>
+				<div id="skill-media-preview" class="skill-rename-dialog__media-preview">
+					<button type="button" id="skill-media-remove" class="skill-rename-dialog__media-remove" title="Remove media">✕</button>
+				</div>
+			</div>
 			<div class="skill-rename-dialog__actions">
 				<button type="button" class="skill-rename-dialog__button skill-rename-dialog__button--ghost" data-rename-cancel>Cancel</button>
 				<button type="submit" class="skill-rename-dialog__button">Save</button>
@@ -186,8 +225,55 @@ renameDialog.innerHTML = `
 const renameForm = renameDialog.querySelector(".skill-rename-dialog__form");
 const renameInput = renameDialog.querySelector("#skill-rename-input");
 const renameDescInput = renameDialog.querySelector("#skill-desc-input");
+const renameMediaInput = renameDialog.querySelector("#skill-media-input");
+const renameMediaPreview = renameDialog.querySelector("#skill-media-preview");
+const renameMediaUploading = renameDialog.querySelector("#skill-media-uploading");
+const renameMediaRemoveBtn = renameDialog.querySelector("#skill-media-remove");
 const renameCancelTargets = renameDialog.querySelectorAll("[data-rename-cancel]");
+
+// Tracks the staged media during a rename dialog session
+let renameMediaStaged = { url: "", type: "" };
+
 viewportFrame.appendChild(renameDialog);
+
+// ── Detail window (right-click when edit mode OFF, desktop) ──────
+const detailWindow = document.createElement("div");
+detailWindow.className = "skill-detail-window";
+detailWindow.hidden = true;
+detailWindow.innerHTML = `
+	<div class="skill-detail-window__backdrop" data-detail-close></div>
+	<div class="skill-detail-window__panel" role="dialog" aria-modal="true">
+		<button type="button" class="skill-detail-window__close" data-detail-close title="Close">✕</button>
+		<p class="skill-detail-window__kicker">Node Details</p>
+		<h2 class="skill-detail-window__title" id="skill-detail-title"></h2>
+		<div class="skill-detail-window__media" id="skill-detail-media"></div>
+		<div id="skill-detail-desc-section">
+			<p class="skill-detail-window__desc-label">Description</p>
+			<p class="skill-detail-window__desc" id="skill-detail-desc"></p>
+		</div>
+	</div>
+`;
+viewportFrame.appendChild(detailWindow);
+
+const detailTitle = detailWindow.querySelector("#skill-detail-title");
+const detailMedia = detailWindow.querySelector("#skill-detail-media");
+const detailDescSection = detailWindow.querySelector("#skill-detail-desc-section");
+const detailDesc = detailWindow.querySelector("#skill-detail-desc");
+
+// Bind close targets directly so clicks never bubble to viewportFrame handlers
+const detailCloseTargets = detailWindow.querySelectorAll("[data-detail-close]");
+for (const el of detailCloseTargets) {
+	el.addEventListener("click", (event) => {
+		event.stopPropagation();
+		closeDetailWindow();
+	});
+}
+
+// Stop clicks inside the panel from bubbling to the viewport
+const detailPanel = detailWindow.querySelector(".skill-detail-window__panel");
+detailPanel.addEventListener("click", (event) => {
+	event.stopPropagation();
+});
 
 // ── Description popup ──────────────────────────────────────────────
 const nodeDescPopup = document.createElement("div");
@@ -261,125 +347,125 @@ function escapeHtml(value) {
 }
 
 function computeNodeFontSize(title, nodeSize) {
-    const length = String(title ?? "").trim().length;
-    
-    // 1. Calculate a dynamic base that grows with the node, but has a higher minimum cap
-    const base = Math.max(14, Math.round(nodeSize * 0.18)); 
+	const length = String(title ?? "").trim().length;
 
-    // 2. Short Words (4 chars or less): Give them a scaling bonus instead of a limit
-    if (length <= 4) {
-        // Boosts the size for short words, maxing out at a clean 24px
-        return `${Math.min(Math.round(base * 1.3), 24)}px`;
-    }
+	// 1. Calculate a dynamic base that grows with the node, but has a higher minimum cap
+	const base = Math.max(14, Math.round(nodeSize * 0.18));
 
-    // 3. Long Words: Reduce font size gradually as length increases. Floor at 6px.
-    const excess = Math.max(0, length - 4);
-    
-    // Dropping by 3.5% per character makes the drop noticeable immediately
-    const scale = Math.max(0.45, 1 - (excess * 0.005)); 
-    const size = Math.max(6, Math.round(base * scale));
-    
-    return `${size}px`;
-// undo redo
+	// 2. Short Words (4 chars or less): Give them a scaling bonus instead of a limit
+	if (length <= 4) {
+		// Boosts the size for short words, maxing out at a clean 24px
+		return `${Math.min(Math.round(base * 1.3), 24)}px`;
+	}
+
+	// 3. Long Words: Reduce font size gradually as length increases. Floor at 6px.
+	const excess = Math.max(0, length - 4);
+
+	// Dropping by 3.5% per character makes the drop noticeable immediately
+	const scale = Math.max(0.45, 1 - (excess * 0.005));
+	const size = Math.max(6, Math.round(base * scale));
+
+	return `${size}px`;
+	// undo redo
 }
 
-	function cloneNodes(nodes) {
-		return nodes.map((node) => ({ ...node }));
+function cloneNodes(nodes) {
+	return nodes.map((node) => ({ ...node }));
+}
+
+function cloneConnections(connections) {
+	return connections.map((connection) => ({ ...connection }));
+}
+
+function serializeNodes(nodes) {
+	const serialized = {};
+
+	for (const node of nodes) {
+		serialized[node.id] = { ...node };
 	}
 
-	function cloneConnections(connections) {
-		return connections.map((connection) => ({ ...connection }));
+	return serialized;
+}
+
+function serializeConnections(connections) {
+	const serialized = {};
+
+	for (const connection of connections) {
+		serialized[connection.id] = { ...connection };
 	}
 
-	function serializeNodes(nodes) {
-		const serialized = {};
+	return serialized;
+}
 
-		for (const node of nodes) {
-			serialized[node.id] = { ...node };
-		}
+function captureTreeSnapshot() {
+	return {
+		nodes: cloneNodes(normalizeNodes(latestNodesSource)),
+		connections: cloneConnections(normalizeConnections(latestConnectionsSource)),
+	};
+}
 
-		return serialized;
+function pushHistorySnapshot(snapshot) {
+	historyUndoStack = [...historyUndoStack, snapshot].slice(-historyLimit);
+	historyRedoStack = [];
+}
+
+function resetHistory() {
+	historyUndoStack = [];
+	historyRedoStack = [];
+}
+
+function syncTreeSnapshot(snapshot) {
+	latestNodesSource = cloneNodes(snapshot.nodes);
+	latestConnectionsSource = cloneConnections(snapshot.connections);
+	lastNodesDigest = nodeDigest(latestNodesSource);
+	lastConnectionsDigest = connectionDigest(latestConnectionsSource);
+	firstSelectedNodeId = null;
+	clearSelectedNodes();
+	closeRenameDialog();
+	interactionState.consumeClick = false;
+	pendingNodePointer = null;
+	activeNodeDrag = null;
+	activeResize = null;
+	camera.activePan = null;
+	camera.activePinch = null;
+	renderScene();
+	updateControlsUi();
+
+	if (!skillSync.hasRemoteTreeSync()) {
+		return;
 	}
 
-	function serializeConnections(connections) {
-		const serialized = {};
+	skillSync.setTreeData(serializeNodes(latestNodesSource), serializeConnections(latestConnectionsSource));
+}
 
-		for (const connection of connections) {
-			serialized[connection.id] = { ...connection };
-		}
-
-		return serialized;
+function undoTreeChange() {
+	if (historyUndoStack.length === 0) {
+		return;
 	}
 
-	function captureTreeSnapshot() {
-		return {
-			nodes: cloneNodes(normalizeNodes(latestNodesSource)),
-			connections: cloneConnections(normalizeConnections(latestConnectionsSource)),
-		};
+	const snapshot = historyUndoStack.pop();
+	historyRedoStack.push(captureTreeSnapshot());
+	syncTreeSnapshot(snapshot);
+}
+
+function redoTreeChange() {
+	if (historyRedoStack.length === 0) {
+		return;
 	}
 
-	function pushHistorySnapshot(snapshot) {
-		historyUndoStack = [...historyUndoStack, snapshot].slice(-historyLimit);
-		historyRedoStack = [];
-	}
+	const snapshot = historyRedoStack.pop();
+	historyUndoStack.push(captureTreeSnapshot());
+	syncTreeSnapshot(snapshot);
+}
 
-	function resetHistory() {
-		historyUndoStack = [];
-		historyRedoStack = [];
-	}
-
-	function syncTreeSnapshot(snapshot) {
-		latestNodesSource = cloneNodes(snapshot.nodes);
-		latestConnectionsSource = cloneConnections(snapshot.connections);
-		lastNodesDigest = nodeDigest(latestNodesSource);
-		lastConnectionsDigest = connectionDigest(latestConnectionsSource);
-		firstSelectedNodeId = null;
-		clearSelectedNodes();
-		closeRenameDialog();
-		interactionState.consumeClick = false;
-		pendingNodePointer = null;
-		activeNodeDrag = null;
-		activeResize = null;
-		camera.activePan = null;
-		camera.activePinch = null;
-		renderScene();
-		updateControlsUi();
-
-		if (!skillSync.hasRemoteTreeSync()) {
-			return;
-		}
-
-		skillSync.setTreeData(serializeNodes(latestNodesSource), serializeConnections(latestConnectionsSource));
-	}
-
-	function undoTreeChange() {
-		if (historyUndoStack.length === 0) {
-			return;
-		}
-
-		const snapshot = historyUndoStack.pop();
-		historyRedoStack.push(captureTreeSnapshot());
-		syncTreeSnapshot(snapshot);
-	}
-
-	function redoTreeChange() {
-		if (historyRedoStack.length === 0) {
-			return;
-		}
-
-		const snapshot = historyRedoStack.pop();
-		historyUndoStack.push(captureTreeSnapshot());
-		syncTreeSnapshot(snapshot);
-	}
-
-	function isEditableShortcutTarget(target) {
-		return Boolean(
-			target &&
-			(typeof target.closest === "function"
-				? target.closest("input, textarea, select, [contenteditable='true']") || target.isContentEditable
-				: false),
-		);
-	}
+function isEditableShortcutTarget(target) {
+	return Boolean(
+		target &&
+		(typeof target.closest === "function"
+			? target.closest("input, textarea, select, [contenteditable='true']") || target.isContentEditable
+			: false),
+	);
+}
 
 function nodeDigest(nodes) {
 	return JSON.stringify(
@@ -390,6 +476,8 @@ function nodeDigest(nodes) {
 				id: node.id,
 				title: node.title,
 				description: node.description ?? "",
+				mediaUrl: node.mediaUrl ?? "",
+				mediaType: node.mediaType ?? "",
 				x: node.x,
 				y: node.y,
 				size: node.size,
@@ -430,11 +518,15 @@ function coerceNode(candidate, fallbackId) {
 	const state = nodeStates.includes(candidate.state) ? candidate.state : "deactivated";
 
 	const description = String(candidate.description ?? "").trim();
+	const mediaUrl = String(candidate.mediaUrl ?? "").trim();
+	const mediaType = ["image", "video"].includes(candidate.mediaType) ? candidate.mediaType : "";
 
 	return {
 		id: String(candidate.id ?? fallbackId),
 		title,
 		description,
+		mediaUrl,
+		mediaType,
 		x: Number.isFinite(x) ? x : canvasSize / 2,
 		y: Number.isFinite(y) ? y : canvasSize / 2,
 		size: Number.isFinite(size) ? clamp(size, minNodeSize, maxNodeSize) : defaultNodeSize,
@@ -567,7 +659,107 @@ function closeRenameDialog() {
 	renameDialog.hidden = true;
 	delete renameDialog.dataset.open;
 	interactionState.consumeClick = false;
+	// Reset media staging
+	renameMediaStaged = { url: "", type: "" };
+	renameMediaInput.value = "";
+	renameMediaPreview.classList.remove("has-media");
+	const existingEl = renameMediaPreview.querySelector("img, video");
+	if (existingEl) existingEl.remove();
+	renameMediaUploading.classList.remove("is-active");
 }
+
+function closeDetailWindow() {
+	detailWindow.hidden = true;
+	detailMedia.replaceChildren();
+}
+
+function openDetailWindow(nodeId) {
+	const node = normalizeNodes(latestNodesSource).find((entry) => entry.id === nodeId);
+	if (!node) return;
+
+	detailTitle.textContent = node.title;
+
+	// Media
+	detailMedia.replaceChildren();
+	if (node.mediaUrl) {
+		if (node.mediaType === "video") {
+			const vid = document.createElement("video");
+			vid.src = node.mediaUrl;
+			vid.controls = true;
+			vid.playsInline = true;
+			detailMedia.appendChild(vid);
+		} else {
+			const img = document.createElement("img");
+			img.src = node.mediaUrl;
+			img.alt = node.title;
+			img.draggable = false;
+			detailMedia.appendChild(img);
+		}
+	}
+
+	// Description
+	const desc = (node.description ?? "").trim();
+	if (desc) {
+		detailDescSection.style.display = "";
+		detailDesc.textContent = desc;
+	} else if (!node.mediaUrl) {
+		// Show "no content" message if neither media nor description
+		detailDescSection.style.display = "";
+		detailDesc.textContent = "";
+		const emptyMsg = document.createElement("p");
+		emptyMsg.className = "skill-detail-window__empty";
+		emptyMsg.textContent = "No description or media attached yet.";
+		detailDesc.appendChild(emptyMsg);
+	} else {
+		detailDescSection.style.display = "none";
+	}
+
+	detailWindow.hidden = false;
+}
+
+// ── Media upload handlers ─────────────────────────────────────────
+renameMediaInput.addEventListener("change", async () => {
+	const file = renameMediaInput.files?.[0];
+	if (!file) return;
+
+	renameMediaUploading.classList.add("is-active");
+	renameMediaPreview.classList.remove("has-media");
+	const existingEl = renameMediaPreview.querySelector("img, video");
+	if (existingEl) existingEl.remove();
+
+	try {
+		const result = await uploadToCloudinary(file);
+		renameMediaStaged = { url: result.url, type: result.resourceType };
+
+		if (result.resourceType === "video") {
+			const vid = document.createElement("video");
+			vid.src = result.url;
+			vid.controls = true;
+			vid.playsInline = true;
+			renameMediaPreview.appendChild(vid);
+		} else {
+			const img = document.createElement("img");
+			img.src = result.url;
+			img.alt = "Uploaded media";
+			img.draggable = false;
+			renameMediaPreview.appendChild(img);
+		}
+		renameMediaPreview.classList.add("has-media");
+	} catch (err) {
+		console.error("Media upload failed:", err);
+		alert("Upload failed. Please try again.");
+	} finally {
+		renameMediaUploading.classList.remove("is-active");
+	}
+});
+
+renameMediaRemoveBtn.addEventListener("click", () => {
+	renameMediaStaged = { url: "", type: "" };
+	renameMediaInput.value = "";
+	renameMediaPreview.classList.remove("has-media");
+	const el = renameMediaPreview.querySelector("img, video");
+	if (el) el.remove();
+});
 
 function openRenameDialog(nodeId) {
 	if (!canModifyStructure()) {
@@ -583,6 +775,32 @@ function openRenameDialog(nodeId) {
 	activeRenameNodeId = node.id;
 	renameInput.value = node.title;
 	renameDescInput.value = node.description ?? "";
+
+	// Populate media preview from existing node data
+	renameMediaStaged = { url: node.mediaUrl ?? "", type: node.mediaType ?? "" };
+	renameMediaInput.value = "";
+	const existingMediaEl = renameMediaPreview.querySelector("img, video");
+	if (existingMediaEl) existingMediaEl.remove();
+
+	if (renameMediaStaged.url) {
+		if (renameMediaStaged.type === "video") {
+			const vid = document.createElement("video");
+			vid.src = renameMediaStaged.url;
+			vid.controls = true;
+			vid.playsInline = true;
+			renameMediaPreview.appendChild(vid);
+		} else {
+			const img = document.createElement("img");
+			img.src = renameMediaStaged.url;
+			img.alt = "Current media";
+			img.draggable = false;
+			renameMediaPreview.appendChild(img);
+		}
+		renameMediaPreview.classList.add("has-media");
+	} else {
+		renameMediaPreview.classList.remove("has-media");
+	}
+
 	renameDialog.hidden = false;
 	renameDialog.dataset.open = "true";
 	renameInput.focus();
@@ -601,6 +819,8 @@ function saveRenameDialog() {
 	}
 
 	const nextDescription = String(renameDescInput.value ?? "").trim();
+	const nextMediaUrl = renameMediaStaged.url;
+	const nextMediaType = renameMediaStaged.type;
 
 	const node = normalizeNodes(latestNodesSource).find((entry) => entry.id === activeRenameNodeId);
 
@@ -609,7 +829,11 @@ function saveRenameDialog() {
 		return;
 	}
 
-	if (node.title === nextTitle && (node.description ?? "") === nextDescription) {
+	const titleSame = node.title === nextTitle;
+	const descSame = (node.description ?? "") === nextDescription;
+	const mediaSame = (node.mediaUrl ?? "") === nextMediaUrl && (node.mediaType ?? "") === nextMediaType;
+
+	if (titleSame && descSame && mediaSame) {
 		closeRenameDialog();
 		return;
 	}
@@ -620,6 +844,8 @@ function saveRenameDialog() {
 		...node,
 		title: nextTitle,
 		description: nextDescription,
+		mediaUrl: nextMediaUrl,
+		mediaType: nextMediaType,
 		updatedAt: nowStamp(),
 	};
 
@@ -811,7 +1037,7 @@ function renderNodes(nodes) {
 			node = document.createElement("button");
 			node.type = "button";
 			node.dataset.nodeId = nodeData.id;
-			
+
 			// Attach listeners once
 			node.addEventListener("mouseenter", () => {
 				const data = node._nodeData;
@@ -832,12 +1058,14 @@ function renderNodes(nodes) {
 			node.addEventListener("touchstart", (event) => {
 				const data = node._nodeData;
 				const isMobileDevice = !isDesktopLayout();
-				if (!isMobileDevice || !data || !(data.description ?? "").trim()) return;
+				if (!isMobileDevice || !data) return;
+				if (!(data.description ?? "").trim() && !data.mediaUrl) return;
 				descLongPressActive = false;
 				if (descLongPressTimer) clearTimeout(descLongPressTimer);
 				descLongPressTimer = setTimeout(() => {
 					descLongPressActive = true;
-					showNodeDesc(data.id, node);
+					hideNodeDesc(true);
+					openDetailWindow(data.id);
 				}, 500);
 			}, { passive: true });
 
@@ -857,13 +1085,24 @@ function renderNodes(nodes) {
 
 			node.addEventListener("contextmenu", (event) => {
 				const data = node._nodeData;
-				if (!canModifyStructure() || !data) {
+				if (!data) return;
+
+				// Edit mode ON → open rename dialog
+				if (canModifyStructure()) {
+					event.preventDefault();
+					event.stopPropagation();
+					hideNodeDesc(true);
+					openRenameDialog(data.id);
 					return;
 				}
-				event.preventDefault();
-				event.stopPropagation();
-				hideNodeDesc(true);
-				openRenameDialog(data.id);
+
+				// Desktop, edit mode OFF → open detail window
+				if (isDesktopLayout() && !editMode) {
+					event.preventDefault();
+					event.stopPropagation();
+					hideNodeDesc(true);
+					openDetailWindow(data.id);
+				}
 			});
 
 			node.addEventListener("pointerdown", (event) => {
@@ -893,6 +1132,10 @@ function renderNodes(nodes) {
 				const data = node._nodeData;
 				if (!data) return;
 				event.stopPropagation();
+				if (descLongPressActive) {
+					descLongPressActive = false;
+					return;
+				}
 				if (interactionState.consumeClick) {
 					interactionState.consumeClick = false;
 					return;
@@ -945,7 +1188,7 @@ function renderNodes(nodes) {
 			labelEl.className = "skill-node__label";
 			node.appendChild(labelEl);
 		}
-		
+
 		const titleEscaped = escapeHtml(nodeData.title);
 		if (labelEl.innerHTML !== titleEscaped) {
 			labelEl.innerHTML = titleEscaped;
@@ -1302,7 +1545,7 @@ function finishPointerInteraction(event) {
 		interactionState.consumeClick = camera.activePan.moved;
 		camera.activePan = null;
 	}
-// multi
+	// multi
 	if (activeNodeDrag && activeNodeDrag.pointerId === event.pointerId) {
 		interactionState.consumeClick = activeNodeDrag.moved;
 		if (activeNodeDrag.moved) {
@@ -1362,7 +1605,7 @@ viewportFrame.addEventListener("pointerdown", (event) => {
 		return;
 	}
 
-	if (event.target.closest(".skill-controls, .skill-node, .skill-node__resize")) {
+	if (event.target.closest(".skill-controls, .skill-node, .skill-node__resize, .skill-detail-window, .skill-rename-dialog")) {
 		return;
 	}
 
@@ -1414,7 +1657,7 @@ viewportFrame.addEventListener("pointermove", (event) => {
 		if (!activeNodeDrag.moved) {
 			return;
 		}
-// multi
+		// multi
 		const nextNodes = normalizeNodes(latestNodesSource);
 		const nodeIds = activeNodeDrag.selectedNodeIds ?? [activeNodeDrag.nodeId];
 		const originLookup = activeNodeDrag.selectedNodeOrigins ?? new Map([[activeNodeDrag.nodeId, { x: activeNodeDrag.originX, y: activeNodeDrag.originY }]]);
@@ -1470,6 +1713,12 @@ viewportFrame.addEventListener(
 			return;
 		}
 
+		// Don't hijack scroll when a dialog/detail window is open
+		// (the panel itself can scroll if content is long)
+		if (!detailWindow.hidden || !renameDialog.hidden) {
+			return;
+		}
+
 		event.preventDefault();
 		const viewportX = event.clientX - camera.viewportBounds.left;
 		const viewportY = event.clientY - camera.viewportBounds.top;
@@ -1522,7 +1771,7 @@ viewportFrame.addEventListener(
 			return;
 		}
 
-		if (event.target.closest(".skill-controls, .page-nav-arrow")) {
+		if (event.target.closest(".skill-controls, .page-nav-arrow, .skill-detail-window, .skill-rename-dialog")) {
 			return;
 		}
 
@@ -1578,7 +1827,7 @@ viewportFrame.addEventListener("click", (event) => {
 		return;
 	}
 
-	if (event.target.closest(".skill-rename-dialog")) {
+	if (event.target.closest(".skill-rename-dialog, .skill-detail-window")) {
 		return;
 	}
 
@@ -1618,6 +1867,11 @@ toggleDeleteBtn.addEventListener("click", () => {
 
 viewportFrame.addEventListener("keydown", (event) => {
 	if (event.key === "Escape") {
+		if (!detailWindow.hidden) {
+			closeDetailWindow();
+			return;
+		}
+
 		if (!renameDialog.hidden) {
 			closeRenameDialog();
 			return;
@@ -1655,6 +1909,7 @@ renameInput.addEventListener("keydown", (event) => {
 function handleLayoutChange() {
 	if (!isDesktopLayout()) {
 		closeRenameDialog();
+		closeDetailWindow();
 		editMode = false;
 		deleteMode = false;
 		clearSelectedNodes();
@@ -1713,6 +1968,13 @@ const skillSync = new SkillSync({
 		}
 		updateControlsUi();
 		renderScene();
+	}
+});
+
+// Prevent browser default drag-and-drop actions on media to avoid input freeze bugs
+window.addEventListener("dragstart", (event) => {
+	if (event.target.tagName === "IMG" || event.target.tagName === "VIDEO") {
+		event.preventDefault();
 	}
 });
 
