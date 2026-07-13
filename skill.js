@@ -91,6 +91,21 @@ const guestDemoConnections = [
 	},
 ];
 
+const guestDemoRegions = [];
+
+const regionColorPresets = [
+	"rgba(77, 216, 255, 0.12)",
+	"rgba(168, 85, 247, 0.12)",
+	"rgba(52, 211, 153, 0.12)",
+	"rgba(251, 191, 36, 0.12)",
+	"rgba(239, 68, 68, 0.12)",
+	"rgba(236, 72, 153, 0.12)",
+	"rgba(59, 130, 246, 0.12)",
+	"rgba(255, 255, 255, 0.08)",
+];
+
+const defaultRegionColor = regionColorPresets[0];
+
 const connectionLayer = document.createElementNS(svgNs, "g");
 connectionLayer.setAttribute("id", "skill-connection-layer");
 lineLayer.appendChild(connectionLayer);
@@ -174,8 +189,13 @@ let lastConnectionsDigest = "";
 let pendingNodePointer = null;
 let activeNodeDrag = null;
 let activeResize = null;
+let activeSelectionRect = null;
+let activeRegionDrag = null;
 let latestNodesSource = null;
 let latestConnectionsSource = null;
+let latestRegionsSource = null;
+let lastRegionsDigest = "";
+let activeRegionEditId = null;
 let historyUndoStack = [];
 let historyRedoStack = [];
 
@@ -235,6 +255,79 @@ const renameCancelTargets = renameDialog.querySelectorAll("[data-rename-cancel]"
 let renameMediaStaged = { url: "", type: "" };
 
 viewportFrame.appendChild(renameDialog);
+
+const selectionRectEl = document.createElement("div");
+selectionRectEl.className = "skill-selection-rect";
+selectionRectEl.hidden = true;
+canvas.appendChild(selectionRectEl);
+
+const regionLayer = document.createElement("div");
+regionLayer.className = "skill-region-layer";
+canvas.insertBefore(regionLayer, nodeLayer);
+
+// ── Region edit dialog ──────────────────────────────────────────────
+const regionEditDialog = document.createElement("div");
+regionEditDialog.className = "skill-region-dialog";
+regionEditDialog.hidden = true;
+regionEditDialog.innerHTML = `
+	<div class="skill-region-dialog__backdrop" data-region-cancel></div>
+	<div class="skill-region-dialog__panel" role="dialog" aria-modal="true" aria-labelledby="skill-region-title">
+		<p class="skill-region-dialog__kicker">Edit region</p>
+		<h2 id="skill-region-title" class="skill-region-dialog__title">Update the region</h2>
+		<form class="skill-region-dialog__form" autocomplete="off">
+			<label class="skill-region-dialog__label" for="skill-region-name-input">Region name</label>
+			<input id="skill-region-name-input" class="skill-region-dialog__input" type="text" maxlength="80" spellcheck="false" />
+			<label class="skill-region-dialog__label">Color</label>
+			<div class="skill-region-dialog__color-row" id="skill-region-color-row"></div>
+			<div class="skill-region-dialog__actions">
+				<button type="button" class="skill-region-dialog__button skill-region-dialog__button--ghost" data-region-cancel>Cancel</button>
+				<button type="submit" class="skill-region-dialog__button">Save</button>
+			</div>
+		</form>
+	</div>
+`;
+
+const regionEditForm = regionEditDialog.querySelector(".skill-region-dialog__form");
+const regionEditNameInput = regionEditDialog.querySelector("#skill-region-name-input");
+const regionEditColorRow = regionEditDialog.querySelector("#skill-region-color-row");
+let regionEditStagedColor = defaultRegionColor;
+
+// Build color swatches
+for (const preset of regionColorPresets) {
+	const swatch = document.createElement("button");
+	swatch.type = "button";
+	swatch.className = "skill-region-dialog__color-swatch";
+	swatch.style.background = preset;
+	swatch.dataset.color = preset;
+	swatch.addEventListener("click", () => {
+		regionEditStagedColor = preset;
+		updateRegionColorSwatches();
+	});
+	regionEditColorRow.appendChild(swatch);
+}
+
+function updateRegionColorSwatches() {
+	for (const btn of regionEditColorRow.children) {
+		btn.classList.toggle("is-active", btn.dataset.color === regionEditStagedColor);
+	}
+}
+
+viewportFrame.appendChild(regionEditDialog);
+
+regionEditDialog.addEventListener("click", (event) => {
+	if (event.target.closest("[data-region-cancel]")) {
+		closeRegionEditDialog();
+		return;
+	}
+	if (event.target.closest(".skill-region-dialog__panel")) {
+		event.stopPropagation();
+	}
+});
+
+regionEditForm.addEventListener("submit", (event) => {
+	event.preventDefault();
+	saveRegionEditDialog();
+});
 
 // ── Detail window (right-click when edit mode OFF, desktop) ──────
 const detailWindow = document.createElement("div");
@@ -377,6 +470,10 @@ function cloneConnections(connections) {
 	return connections.map((connection) => ({ ...connection }));
 }
 
+function cloneRegions(regions) {
+	return regions.map((region) => ({ ...region }));
+}
+
 function serializeNodes(nodes) {
 	const serialized = {};
 
@@ -397,10 +494,21 @@ function serializeConnections(connections) {
 	return serialized;
 }
 
+function serializeRegions(regions) {
+	const serialized = {};
+
+	for (const region of regions) {
+		serialized[region.id] = { ...region };
+	}
+
+	return serialized;
+}
+
 function captureTreeSnapshot() {
 	return {
 		nodes: cloneNodes(normalizeNodes(latestNodesSource)),
 		connections: cloneConnections(normalizeConnections(latestConnectionsSource)),
+		regions: cloneRegions(normalizeRegions(latestRegionsSource)),
 	};
 }
 
@@ -417,11 +525,14 @@ function resetHistory() {
 function syncTreeSnapshot(snapshot) {
 	latestNodesSource = cloneNodes(snapshot.nodes);
 	latestConnectionsSource = cloneConnections(snapshot.connections);
+	latestRegionsSource = cloneRegions(snapshot.regions);
 	lastNodesDigest = nodeDigest(latestNodesSource);
 	lastConnectionsDigest = connectionDigest(latestConnectionsSource);
+	lastRegionsDigest = regionDigest(latestRegionsSource);
 	firstSelectedNodeId = null;
 	clearSelectedNodes();
 	closeRenameDialog();
+	closeRegionEditDialog();
 	interactionState.consumeClick = false;
 	pendingNodePointer = null;
 	activeNodeDrag = null;
@@ -435,7 +546,7 @@ function syncTreeSnapshot(snapshot) {
 		return;
 	}
 
-	skillSync.setTreeData(serializeNodes(latestNodesSource), serializeConnections(latestConnectionsSource));
+	skillSync.setTreeData(serializeNodes(latestNodesSource), serializeConnections(latestConnectionsSource), serializeRegions(latestRegionsSource));
 }
 
 function undoTreeChange() {
@@ -499,6 +610,23 @@ function connectionDigest(connections) {
 	);
 }
 
+function regionDigest(regions) {
+	return JSON.stringify(
+		regions
+			.slice()
+			.sort((left, right) => String(left.id).localeCompare(String(right.id)))
+			.map((region) => ({
+				id: region.id,
+				title: region.title,
+				color: region.color,
+				x: region.x,
+				y: region.y,
+				width: region.width,
+				height: region.height,
+			})),
+	);
+}
+
 
 
 function coerceNode(candidate, fallbackId) {
@@ -553,6 +681,34 @@ function coerceConnection(candidate, fallbackId) {
 	};
 }
 
+function coerceRegion(candidate, fallbackId) {
+	if (!candidate || typeof candidate !== "object") {
+		return null;
+	}
+
+	const title = String(candidate.title ?? "").trim();
+
+	if (!title) {
+		return null;
+	}
+
+	const x = Number(candidate.x);
+	const y = Number(candidate.y);
+	const width = Number(candidate.width);
+	const height = Number(candidate.height);
+	const color = String(candidate.color ?? defaultRegionColor);
+
+	return {
+		id: String(candidate.id ?? fallbackId),
+		title,
+		color,
+		x: Number.isFinite(x) ? x : 0,
+		y: Number.isFinite(y) ? y : 0,
+		width: Number.isFinite(width) && width > 0 ? width : 100,
+		height: Number.isFinite(height) && height > 0 ? height : 100,
+	};
+}
+
 function normalizeNodes(source) {
 	if (!source) {
 		return [];
@@ -575,6 +731,18 @@ function normalizeConnections(source) {
 	}
 
 	return Object.entries(source).map(([key, connection]) => coerceConnection(connection, key)).filter(Boolean);
+}
+
+function normalizeRegions(source) {
+	if (!source) {
+		return [];
+	}
+
+	if (Array.isArray(source)) {
+		return source.map((region, index) => coerceRegion(region, index + 1)).filter(Boolean);
+	}
+
+	return Object.entries(source).map(([key, region]) => coerceRegion(region, key)).filter(Boolean);
 }
 
 function upsertNode(source, node) {
@@ -603,12 +771,29 @@ function upsertConnection(source, connection) {
 	return connections;
 }
 
+function upsertRegion(source, region) {
+	const regions = normalizeRegions(source);
+	const existingIndex = regions.findIndex((entry) => entry.id === region.id);
+
+	if (existingIndex >= 0) {
+		regions[existingIndex] = region;
+		return regions;
+	}
+
+	regions.push(region);
+	return regions;
+}
+
 function cloneGuestDemoNodes() {
 	return guestDemoNodes.map((node) => ({ ...node }));
 }
 
 function cloneGuestDemoConnections() {
 	return guestDemoConnections.map((connection) => ({ ...connection }));
+}
+
+function cloneGuestDemoRegions() {
+	return guestDemoRegions.map((region) => ({ ...region }));
 }
 
 function nextNodeState(currentState) {
@@ -671,6 +856,69 @@ function closeRenameDialog() {
 function closeDetailWindow() {
 	detailWindow.hidden = true;
 	detailMedia.replaceChildren();
+}
+
+function closeRegionEditDialog() {
+	activeRegionEditId = null;
+	regionEditDialog.hidden = true;
+	interactionState.consumeClick = false;
+}
+
+function openRegionEditDialog(regionId) {
+	if (!canModifyStructure()) {
+		return;
+	}
+
+	const region = normalizeRegions(latestRegionsSource).find((entry) => entry.id === regionId);
+
+	if (!region) {
+		return;
+	}
+
+	activeRegionEditId = region.id;
+	regionEditNameInput.value = region.title;
+	regionEditStagedColor = region.color;
+	updateRegionColorSwatches();
+	regionEditDialog.hidden = false;
+	regionEditNameInput.focus();
+	regionEditNameInput.select();
+}
+
+function saveRegionEditDialog() {
+	if (!activeRegionEditId) {
+		return;
+	}
+
+	const nextTitle = String(regionEditNameInput.value ?? "").trim();
+
+	if (!nextTitle) {
+		return;
+	}
+
+	const region = normalizeRegions(latestRegionsSource).find((entry) => entry.id === activeRegionEditId);
+
+	if (!region) {
+		closeRegionEditDialog();
+		return;
+	}
+
+	if (region.title === nextTitle && region.color === regionEditStagedColor) {
+		closeRegionEditDialog();
+		return;
+	}
+
+	pushHistorySnapshot(captureTreeSnapshot());
+
+	const updated = {
+		...region,
+		title: nextTitle,
+		color: regionEditStagedColor,
+	};
+
+	latestRegionsSource = upsertRegion(latestRegionsSource, updated);
+	renderScene();
+	persistRegion(updated);
+	closeRegionEditDialog();
 }
 
 function openDetailWindow(nodeId) {
@@ -1110,12 +1358,7 @@ function renderNodes(nodes) {
 				if (!canEditStructure() || event.button !== 0 || !data) {
 					return;
 				}
-				if (event.shiftKey) {
-					event.stopPropagation();
-					toggleSelectedNode(data.id);
-					interactionState.consumeClick = true;
-					return;
-				}
+
 				event.stopPropagation();
 				if (canDelete()) {
 					beginNodePointer(data.id, event, "delete");
@@ -1221,16 +1464,131 @@ function renderNodes(nodes) {
 	renderSelection();
 }
 
+function renderRegions(regions) {
+	const deleting = canDelete();
+
+	const existingEls = new Map();
+	for (const child of regionLayer.children) {
+		const regionId = child.dataset.regionId;
+		if (regionId) {
+			existingEls.set(regionId, child);
+		}
+	}
+
+	const activeIds = new Set();
+
+	for (const regionData of regions) {
+		activeIds.add(regionData.id);
+		let regionEl = existingEls.get(regionData.id);
+
+		if (!regionEl) {
+			regionEl = document.createElement("div");
+			regionEl.dataset.regionId = regionData.id;
+
+			regionEl.addEventListener("contextmenu", (event) => {
+				const id = regionEl.dataset.regionId;
+				if (!id) return;
+
+				if (canModifyStructure()) {
+					event.preventDefault();
+					event.stopPropagation();
+					openRegionEditDialog(id);
+				}
+			});
+
+			regionEl.addEventListener("pointerdown", (event) => {
+				const id = regionEl.dataset.regionId;
+				if (!id || event.button !== 0 || !canModifyStructure()) return;
+				event.stopPropagation();
+				event.preventDefault();
+
+				const region = normalizeRegions(latestRegionsSource).find((r) => r.id === id);
+				if (!region) return;
+
+				const start = getCanvasPoint(event);
+
+				// Capture origins of nodes whose centers are inside this region
+				const containedNodeOrigins = new Map();
+				for (const node of normalizeNodes(latestNodesSource)) {
+					if (
+						node.x >= region.x && node.x <= region.x + region.width &&
+						node.y >= region.y && node.y <= region.y + region.height
+					) {
+						containedNodeOrigins.set(node.id, { x: node.x, y: node.y });
+					}
+				}
+
+				activeRegionDrag = {
+					regionId: id,
+					pointerId: event.pointerId,
+					startX: start.x,
+					startY: start.y,
+					originX: region.x,
+					originY: region.y,
+					containedNodeOrigins,
+					moved: false,
+					historySnapshot: captureTreeSnapshot(),
+				};
+
+				interactionState.consumeClick = false;
+				viewportFrame.setPointerCapture(event.pointerId);
+			});
+
+			regionEl.addEventListener("click", (event) => {
+				const id = regionEl.dataset.regionId;
+				if (!id) return;
+				event.stopPropagation();
+
+				if (canDelete()) {
+					deleteRegion(id);
+				}
+			});
+
+			regionLayer.appendChild(regionEl);
+		}
+
+		regionEl.className = `skill-region${deleting ? " is-deletable" : (canModifyStructure() ? " is-draggable" : "")}`;
+		regionEl.style.left = `${regionData.x}px`;
+		regionEl.style.top = `${regionData.y}px`;
+		regionEl.style.width = `${regionData.width}px`;
+		regionEl.style.height = `${regionData.height}px`;
+		regionEl.style.background = regionData.color;
+
+		let labelEl = regionEl.querySelector(".skill-region__label");
+		if (!labelEl) {
+			labelEl = document.createElement("span");
+			labelEl.className = "skill-region__label";
+			regionEl.appendChild(labelEl);
+		}
+		const titleEscaped = escapeHtml(regionData.title);
+		if (labelEl.textContent !== regionData.title) {
+			labelEl.textContent = regionData.title;
+		}
+	}
+
+	for (const [regionId, childEl] of existingEls) {
+		if (!activeIds.has(regionId)) {
+			childEl.remove();
+		}
+	}
+}
+
 function renderScene() {
 	const nodes = normalizeNodes(latestNodesSource);
 	const connections = normalizeConnections(latestConnectionsSource);
+	const regions = normalizeRegions(latestRegionsSource);
 
+	renderRegions(regions);
 	renderConnections(nodes, connections);
 	renderNodes(nodes);
 }
 
 function persistNode(node) {
 	skillSync.persistNode(node);
+}
+
+function persistRegion(region) {
+	skillSync.persistRegion(region);
 }
 // removal
 function removeConnectionFromLocalState(connectionId) {
@@ -1294,6 +1652,27 @@ function deleteConnection(connectionId, skipHistory = false) {
 	}
 }
 
+function deleteRegion(regionId) {
+	pushHistorySnapshot(captureTreeSnapshot());
+
+	if (!hasRemoteTreeSync()) {
+		latestRegionsSource = normalizeRegions(latestRegionsSource).filter(
+			(region) => region.id !== regionId,
+		);
+		if (activeRegionEditId === regionId) {
+			closeRegionEditDialog();
+		}
+		renderScene();
+		return;
+	}
+
+	skillSync.deleteRegion(regionId);
+
+	if (activeRegionEditId === regionId) {
+		closeRegionEditDialog();
+	}
+}
+
 function updateControlsUi() {
 	const desktop = isDesktopLayout();
 	const signedIn = Boolean(skillSync.currentAuthUser);
@@ -1318,10 +1697,10 @@ function updateControlsUi() {
 		} else if (!desktop) {
 			controlsHint.textContent = "Drag to pan. Tap a skill to cycle its status.";
 		} else if (deleteMode) {
-			controlsHint.textContent = "Delete mode is on. Click a skill or connection to remove it.";
+			controlsHint.textContent = "Delete mode is on. Click a skill, connection, or region to remove it.";
 		} else if (editMode) {
 			controlsHint.textContent =
-				"Shift-click skills to multi-select. Drag any selected skill to move the group. Click empty space to add skills. Click two skills to connect. Drag to move, corner to resize. Right-click a skill to rename it. Double-click to change status.";
+				"Right-click and drag to create a region and select skills. Left-click and drag a region to move it with its nodes. Drag any selected skill to move the group. Click empty space to add skills. Click two skills to connect. Right-click a skill to rename it, a region to edit it. Double-click to change status.";
 		} else {
 			controlsHint.textContent = "Drag to pan. Click a skill to cycle its status. Turn on edit mode to add, move, connect, and resize.";
 		}
@@ -1330,6 +1709,7 @@ function updateControlsUi() {
 
 function setEditMode(nextMode) {
 	closeRenameDialog();
+	closeRegionEditDialog();
 
 	if (!isDesktopLayout()) {
 		editMode = false;
@@ -1595,6 +1975,34 @@ function finishPointerInteraction(event) {
 		activeResize = null;
 	}
 
+	if (activeRegionDrag && activeRegionDrag.pointerId === event.pointerId) {
+		interactionState.consumeClick = activeRegionDrag.moved;
+		if (activeRegionDrag.moved) {
+			if (activeRegionDrag.historySnapshot) {
+				pushHistorySnapshot(activeRegionDrag.historySnapshot);
+			}
+
+			const deltaX = activeRegionDrag.deltaX ?? 0;
+			const deltaY = activeRegionDrag.deltaY ?? 0;
+
+			// Persist the region
+			const region = normalizeRegions(latestRegionsSource).find((r) => r.id === activeRegionDrag.regionId);
+			if (region) {
+				persistRegion(region);
+			}
+
+			// Persist all moved nodes
+			const finalNodes = normalizeNodes(latestNodesSource);
+			for (const [nodeId] of activeRegionDrag.containedNodeOrigins) {
+				const node = finalNodes.find((n) => n.id === nodeId);
+				if (node) {
+					persistNode(node);
+				}
+			}
+		}
+		activeRegionDrag = null;
+	}
+
 	if (viewportFrame.hasPointerCapture(event.pointerId)) {
 		viewportFrame.releasePointerCapture(event.pointerId);
 	}
@@ -1612,8 +2020,109 @@ viewportFrame.addEventListener("pointerdown", (event) => {
 	beginPan(event);
 });
 
+// ── Selection rectangle (right-click + drag in edit mode) ────────
+viewportFrame.addEventListener("pointerdown", (event) => {
+	if (event.button !== 2 || !canEditStructure() || canDelete()) {
+		return;
+	}
+
+	if (event.target.closest(".skill-node, .skill-region, .skill-controls, .skill-detail-window, .skill-rename-dialog, .skill-region-dialog")) {
+		return;
+	}
+
+	const point = getCanvasPoint(event);
+
+	if (findNodeAtCanvasPoint(point.x, point.y)) {
+		return;
+	}
+
+	event.preventDefault();
+	event.stopPropagation();
+	viewportFrame.setPointerCapture(event.pointerId);
+
+	activeSelectionRect = {
+		pointerId: event.pointerId,
+		startX: point.x,
+		startY: point.y,
+		currentX: point.x,
+		currentY: point.y,
+	};
+
+	selectionRectEl.style.left = `${point.x}px`;
+	selectionRectEl.style.top = `${point.y}px`;
+	selectionRectEl.style.width = "0px";
+	selectionRectEl.style.height = "0px";
+	selectionRectEl.hidden = false;
+});
+
+viewportFrame.addEventListener("contextmenu", (event) => {
+	if (!canEditStructure()) {
+		return;
+	}
+
+	if (event.target.closest(".skill-node, .skill-region, .skill-controls, .skill-detail-window, .skill-rename-dialog, .skill-region-dialog")) {
+		return;
+	}
+
+	event.preventDefault();
+});
+
 viewportFrame.addEventListener("pointermove", (event) => {
 	if (camera.activePinch) {
+		return;
+	}
+
+	if (activeSelectionRect && activeSelectionRect.pointerId === event.pointerId) {
+		const point = getCanvasPoint(event);
+		activeSelectionRect.currentX = point.x;
+		activeSelectionRect.currentY = point.y;
+
+		const minX = Math.min(activeSelectionRect.startX, point.x);
+		const minY = Math.min(activeSelectionRect.startY, point.y);
+		const maxX = Math.max(activeSelectionRect.startX, point.x);
+		const maxY = Math.max(activeSelectionRect.startY, point.y);
+
+		selectionRectEl.style.left = `${minX}px`;
+		selectionRectEl.style.top = `${minY}px`;
+		selectionRectEl.style.width = `${maxX - minX}px`;
+		selectionRectEl.style.height = `${maxY - minY}px`;
+		return;
+	}
+
+	if (activeRegionDrag && activeRegionDrag.pointerId === event.pointerId) {
+		const point = getCanvasPoint(event);
+		const deltaX = point.x - activeRegionDrag.startX;
+		const deltaY = point.y - activeRegionDrag.startY;
+
+		if (Math.abs(deltaX) > interactionThreshold || Math.abs(deltaY) > interactionThreshold) {
+			activeRegionDrag.moved = true;
+		}
+
+		if (!activeRegionDrag.moved) return;
+
+		activeRegionDrag.deltaX = deltaX;
+		activeRegionDrag.deltaY = deltaY;
+
+		// Move the region
+		const nextRegions = normalizeRegions(latestRegionsSource);
+		const region = nextRegions.find((r) => r.id === activeRegionDrag.regionId);
+		if (region) {
+			region.x = clamp(activeRegionDrag.originX + deltaX, 0, canvasSize - region.width);
+			region.y = clamp(activeRegionDrag.originY + deltaY, 0, canvasSize - region.height);
+		}
+		latestRegionsSource = nextRegions;
+
+		// Move all nodes that were inside at drag start
+		const nextNodes = normalizeNodes(latestNodesSource);
+		for (const [nodeId, origin] of activeRegionDrag.containedNodeOrigins) {
+			const node = nextNodes.find((n) => n.id === nodeId);
+			if (!node) continue;
+			node.x = clamp(origin.x + deltaX, node.size / 2, canvasSize - node.size / 2);
+			node.y = clamp(origin.y + deltaY, node.size / 2, canvasSize - node.size / 2);
+		}
+		latestNodesSource = nextNodes;
+
+		renderScene();
 		return;
 	}
 
@@ -1703,8 +2212,83 @@ viewportFrame.addEventListener("pointermove", (event) => {
 	}
 });
 
-viewportFrame.addEventListener("pointerup", finishPointerInteraction);
-viewportFrame.addEventListener("pointercancel", finishPointerInteraction);
+function finishSelectionRect(event) {
+	if (!activeSelectionRect || activeSelectionRect.pointerId !== event.pointerId) {
+		return;
+	}
+
+	const minX = Math.min(activeSelectionRect.startX, activeSelectionRect.currentX);
+	const minY = Math.min(activeSelectionRect.startY, activeSelectionRect.currentY);
+	const maxX = Math.max(activeSelectionRect.startX, activeSelectionRect.currentX);
+	const maxY = Math.max(activeSelectionRect.startY, activeSelectionRect.currentY);
+
+	selectionRectEl.hidden = true;
+	activeSelectionRect = null;
+
+	if (viewportFrame.hasPointerCapture(event.pointerId)) {
+		viewportFrame.releasePointerCapture(event.pointerId);
+	}
+
+	const rectWidth = maxX - minX;
+	const rectHeight = maxY - minY;
+
+	if (rectWidth < interactionThreshold && rectHeight < interactionThreshold) {
+		return;
+	}
+
+	// Select nodes inside the rect
+	const nodes = normalizeNodes(latestNodesSource);
+	const hits = [];
+
+	for (const node of nodes) {
+		if (node.x >= minX && node.x <= maxX && node.y >= minY && node.y <= maxY) {
+			hits.push(node.id);
+		}
+	}
+
+	if (hits.length > 0) {
+		selectedNodes = hits;
+		firstSelectedNodeId = null;
+		renderSelection();
+	}
+
+	// Create a persistent region from the rect
+	const title = window.prompt("Enter Region Title:");
+	const value = title?.trim();
+
+	if (!value) {
+		return;
+	}
+
+	pushHistorySnapshot(captureTreeSnapshot());
+
+	const regionData = {
+		id: hasRemoteTreeSync() ? null : createLocalId("region"),
+		title: value,
+		color: defaultRegionColor,
+		x: minX,
+		y: minY,
+		width: rectWidth,
+		height: rectHeight,
+		createdAt: nowStamp(),
+	};
+
+	if (hasRemoteTreeSync()) {
+		skillSync.pushNewRegion(regionData);
+	} else {
+		latestRegionsSource = upsertRegion(latestRegionsSource, regionData);
+		renderScene();
+	}
+}
+
+viewportFrame.addEventListener("pointerup", (event) => {
+	finishSelectionRect(event);
+	finishPointerInteraction(event);
+});
+viewportFrame.addEventListener("pointercancel", (event) => {
+	finishSelectionRect(event);
+	finishPointerInteraction(event);
+});
 
 viewportFrame.addEventListener(
 	"wheel",
@@ -1827,7 +2411,7 @@ viewportFrame.addEventListener("click", (event) => {
 		return;
 	}
 
-	if (event.target.closest(".skill-rename-dialog, .skill-detail-window")) {
+	if (event.target.closest(".skill-rename-dialog, .skill-detail-window, .skill-region-dialog")) {
 		return;
 	}
 
@@ -1836,7 +2420,7 @@ viewportFrame.addEventListener("click", (event) => {
 		return;
 	}
 
-	if (event.target.closest(".skill-controls, .skill-node, .skill-node__resize, .skill-connection")) {
+	if (event.target.closest(".skill-controls, .skill-node, .skill-node__resize, .skill-connection, .skill-region")) {
 		return;
 	}
 
@@ -1867,6 +2451,11 @@ toggleDeleteBtn.addEventListener("click", () => {
 
 viewportFrame.addEventListener("keydown", (event) => {
 	if (event.key === "Escape") {
+		if (!regionEditDialog.hidden) {
+			closeRegionEditDialog();
+			return;
+		}
+
 		if (!detailWindow.hidden) {
 			closeDetailWindow();
 			return;
@@ -1910,6 +2499,7 @@ function handleLayoutChange() {
 	if (!isDesktopLayout()) {
 		closeRenameDialog();
 		closeDetailWindow();
+		closeRegionEditDialog();
 		editMode = false;
 		deleteMode = false;
 		clearSelectedNodes();
@@ -1953,18 +2543,34 @@ const skillSync = new SkillSync({
 		lastConnectionsDigest = digest;
 		renderScene();
 	},
+	onRegionsUpdate: (val) => {
+		const incoming = normalizeRegions(val);
+		const digest = regionDigest(incoming);
+
+		latestRegionsSource = incoming;
+
+		if (digest === lastRegionsDigest) {
+			return;
+		}
+
+		lastRegionsDigest = digest;
+		renderScene();
+	},
 	onAuthStateChange: (user) => {
 		if (!user) {
 			latestNodesSource = cloneGuestDemoNodes();
 			latestConnectionsSource = cloneGuestDemoConnections();
+			latestRegionsSource = cloneGuestDemoRegions();
 			firstSelectedNodeId = null;
 			clearSelectedNodes();
 			closeRenameDialog();
+			closeRegionEditDialog();
 			editMode = false;
 			deleteMode = false;
 			resetHistory();
 			lastNodesDigest = nodeDigest(latestNodesSource);
 			lastConnectionsDigest = connectionDigest(latestConnectionsSource);
+			lastRegionsDigest = regionDigest(latestRegionsSource);
 		}
 		updateControlsUi();
 		renderScene();

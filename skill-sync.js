@@ -5,13 +5,16 @@ export class SkillSync {
 	constructor(callbacks = {}) {
 		this.nodesRef = null;
 		this.connectionsRef = null;
+		this.regionsRef = null;
 		this.nodesUnsubscribe = null;
 		this.connectionsUnsubscribe = null;
+		this.regionsUnsubscribe = null;
 		this.currentUserId = null;
 		this.currentAuthUser = null;
 		this.callbacks = {
 			onNodesUpdate: callbacks.onNodesUpdate ?? (() => {}),
 			onConnectionsUpdate: callbacks.onConnectionsUpdate ?? (() => {}),
+			onRegionsUpdate: callbacks.onRegionsUpdate ?? (() => {}),
 			onAuthStateChange: callbacks.onAuthStateChange ?? (() => {}),
 		};
 	}
@@ -27,7 +30,7 @@ export class SkillSync {
 				return;
 			}
 
-			if (this.currentUserId === state.user.uid && this.nodesRef && this.connectionsRef) {
+			if (this.currentUserId === state.user.uid && this.nodesRef && this.connectionsRef && this.regionsRef) {
 				this.currentAuthUser = state.user;
 				this.callbacks.onAuthStateChange(state.user);
 				return;
@@ -38,7 +41,7 @@ export class SkillSync {
 	}
 
 	hasRemoteTreeSync() {
-		return Boolean(this.nodesRef && this.connectionsRef && this.currentUserId);
+		return Boolean(this.nodesRef && this.connectionsRef && this.regionsRef && this.currentUserId);
 	}
 
 	disconnect() {
@@ -50,10 +53,16 @@ export class SkillSync {
 			this.connectionsUnsubscribe();
 		}
 
+		if (typeof this.regionsUnsubscribe === "function") {
+			this.regionsUnsubscribe();
+		}
+
 		this.nodesUnsubscribe = null;
 		this.connectionsUnsubscribe = null;
+		this.regionsUnsubscribe = null;
 		this.nodesRef = null;
 		this.connectionsRef = null;
+		this.regionsRef = null;
 		this.currentUserId = null;
 	}
 
@@ -70,6 +79,7 @@ export class SkillSync {
 		this.currentUserId = user.uid;
 		this.nodesRef = ref(database, `users/${user.uid}/skillTree/nodes`);
 		this.connectionsRef = ref(database, `users/${user.uid}/skillTree/connections`);
+		this.regionsRef = ref(database, `users/${user.uid}/skillTree/regions`);
 
 		this.nodesUnsubscribe = onValue(this.nodesRef, (snapshot) => {
 			this.callbacks.onNodesUpdate(snapshot.val());
@@ -77,6 +87,10 @@ export class SkillSync {
 
 		this.connectionsUnsubscribe = onValue(this.connectionsRef, (snapshot) => {
 			this.callbacks.onConnectionsUpdate(snapshot.val());
+		});
+
+		this.regionsUnsubscribe = onValue(this.regionsRef, (snapshot) => {
+			this.callbacks.onRegionsUpdate(snapshot.val());
 		});
 
 		this.callbacks.onAuthStateChange(user);
@@ -103,6 +117,20 @@ export class SkillSync {
 		remove(ref(database, `users/${this.currentUserId}/skillTree/connections/${connectionId}`));
 	}
 
+	persistRegion(region) {
+		if (!this.hasRemoteTreeSync()) {
+			return;
+		}
+		set(ref(database, `users/${this.currentUserId}/skillTree/regions/${region.id}`), region);
+	}
+
+	deleteRegion(regionId) {
+		if (!this.hasRemoteTreeSync()) {
+			return;
+		}
+		remove(ref(database, `users/${this.currentUserId}/skillTree/regions/${regionId}`));
+	}
+
 	pushNewNode(nodeData) {
 		if (!this.hasRemoteTreeSync()) {
 			return null;
@@ -123,12 +151,22 @@ export class SkillSync {
 		return connection;
 	}
 
-	setTreeData(nodes, connections) {
+	pushNewRegion(regionData) {
+		if (!this.hasRemoteTreeSync()) {
+			return null;
+		}
+		const regionRef = push(this.regionsRef);
+		const region = { ...regionData, id: regionRef.key };
+		set(regionRef, region);
+		return region;
+	}
+
+	setTreeData(nodes, connections, regions) {
 		if (!this.hasRemoteTreeSync()) {
 			return;
 		}
 		set(this.nodesRef, nodes);
 		set(this.connectionsRef, connections);
+		set(this.regionsRef, regions);
 	}
 }
-

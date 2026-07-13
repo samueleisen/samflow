@@ -388,6 +388,15 @@ body.skill-page .content {
     transform: scale(1.02);
 }
 
+.skill-selection-rect {
+    position: absolute;
+    border: 1.5px solid rgba(77, 216, 255, 0.6);
+    background: rgba(77, 216, 255, 0.1);
+    pointer-events: none;
+    z-index: 5;
+    border-radius: 3px;
+}
+
 .skill-node__label {
     position: relative;
     z-index: 1;
@@ -798,4 +807,206 @@ body.skill-page .content {
     font-size: 0.88rem;
     color: rgba(244, 247, 251, 0.4);
     font-style: italic;
+}
+
+/* ── Persistent Regions (segmentation) ───────────────────────────── */
+
+.skill-region-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+}
+
+.skill-region {
+    position: absolute;
+    border-radius: 8px;
+    border: 1.5px solid rgba(255, 255, 255, 0.12);
+    pointer-events: none;
+    transition: border-color 140ms ease, box-shadow 140ms ease;
+    overflow: visible;
+}
+
+.is-editing .skill-region,
+.is-delete-mode .skill-region {
+    pointer-events: auto;
+    cursor: pointer;
+}
+
+.skill-region__label {
+    position: absolute;
+    top: 6px;
+    left: 10px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.55);
+    pointer-events: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: calc(100% - 20px);
+}
+
+.skill-region.is-deletable {
+    cursor: not-allowed;
+}
+
+.skill-region.is-deletable:hover {
+    border-color: rgba(255, 80, 80, 0.6);
+    box-shadow: 0 0 0 3px rgba(255, 80, 80, 0.14);
+}
+
+.skill-region.is-draggable {
+    cursor: grab;
+}
+
+.skill-region.is-draggable:active {
+    cursor: grabbing;
+}
+
+/* ── Region edit dialog ──────────────────────────────────────────── */
+
+.skill-region-dialog {
+    position: absolute;
+    inset: 0;
+    z-index: 80;
+    display: grid;
+    place-items: center;
+}
+
+.skill-region-dialog[hidden] {
+    display: none;
+}
+
+.skill-region-dialog__backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(3, 5, 10, 0.66);
+    backdrop-filter: blur(6px);
+}
+
+.skill-region-dialog__panel {
+    position: relative;
+    z-index: 1;
+    width: min(92vw, 26rem);
+    padding: 1.25rem 1.15rem 1.1rem;
+    border-radius: 1.4rem;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background:
+        linear-gradient(180deg, rgba(14, 18, 28, 0.98), rgba(8, 11, 18, 0.96)),
+        rgba(8, 12, 18, 0.96);
+    color: var(--text-color);
+    box-shadow:
+        0 24px 60px rgba(0, 0, 0, 0.42),
+        0 0 0 1px rgba(77, 216, 255, 0.08) inset;
+}
+
+.skill-region-dialog__kicker {
+    margin: 0 0 0.35rem;
+    color: rgba(77, 216, 255, 0.88);
+    font-size: 0.76rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+}
+
+.skill-region-dialog__title {
+    margin: 0 0 1rem;
+    font-size: 1.15rem;
+    line-height: 1.15;
+}
+
+.skill-region-dialog__form {
+    display: grid;
+    gap: 0.9rem;
+}
+
+.skill-region-dialog__label {
+    font-size: 0.92rem;
+    font-weight: 600;
+}
+
+.skill-region-dialog__input {
+    width: 100%;
+    box-sizing: border-box;
+    border-radius: 0.95rem;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-color);
+    padding: 0.85rem 0.95rem;
+    font: inherit;
+    font-size: 1rem;
+    outline: none;
+}
+
+.skill-region-dialog__input::placeholder {
+    color: rgba(244, 247, 251, 0.42);
+}
+
+.skill-region-dialog__input:focus-visible {
+    border-color: rgba(77, 216, 255, 0.75);
+    box-shadow: 0 0 0 3px rgba(77, 216, 255, 0.16);
+}
+
+.skill-region-dialog__color-row {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    padding: 0.25rem 0;
+}
+
+.skill-region-dialog__color-swatch {
+    appearance: none;
+    border: 2px solid rgba(255, 255, 255, 0.12);
+    border-radius: 50%;
+    width: 28px;
+    height: 28px;
+    cursor: pointer;
+    transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+    padding: 0;
+}
+
+.skill-region-dialog__color-swatch:hover {
+    transform: scale(1.15);
+    border-color: rgba(255, 255, 255, 0.35);
+}
+
+.skill-region-dialog__color-swatch.is-active {
+    border-color: rgba(255, 255, 255, 0.8);
+    box-shadow: 0 0 0 3px rgba(77, 216, 255, 0.3);
+    transform: scale(1.1);
+}
+
+.skill-region-dialog__actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.75rem;
+}
+
+.skill-region-dialog__button {
+    appearance: none;
+    border: 1px solid rgba(77, 216, 255, 0.45);
+    border-radius: 999px;
+    background: rgba(77, 216, 255, 0.14);
+    color: var(--text-color);
+    padding: 0.7rem 1rem;
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+    transition: transform 140ms ease, border-color 140ms ease, background-color 140ms ease;
+}
+
+.skill-region-dialog__button:hover,
+.skill-region-dialog__button:focus-visible {
+    outline: none;
+    transform: translateY(-1px);
+    border-color: rgba(77, 216, 255, 0.72);
+    background: rgba(77, 216, 255, 0.22);
+}
+
+.skill-region-dialog__button--ghost {
+    border-color: rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.04);
 }
