@@ -174,6 +174,7 @@ let lastConnectionsDigest = "";
 let pendingNodePointer = null;
 let activeNodeDrag = null;
 let activeResize = null;
+let activeSelectionRect = null;
 let latestNodesSource = null;
 let latestConnectionsSource = null;
 let historyUndoStack = [];
@@ -235,6 +236,11 @@ const renameCancelTargets = renameDialog.querySelectorAll("[data-rename-cancel]"
 let renameMediaStaged = { url: "", type: "" };
 
 viewportFrame.appendChild(renameDialog);
+
+const selectionRectEl = document.createElement("div");
+selectionRectEl.className = "skill-selection-rect";
+selectionRectEl.hidden = true;
+canvas.appendChild(selectionRectEl);
 
 // ── Detail window (right-click when edit mode OFF, desktop) ──────
 const detailWindow = document.createElement("div");
@@ -1110,12 +1116,7 @@ function renderNodes(nodes) {
 				if (!canEditStructure() || event.button !== 0 || !data) {
 					return;
 				}
-				if (event.shiftKey) {
-					event.stopPropagation();
-					toggleSelectedNode(data.id);
-					interactionState.consumeClick = true;
-					return;
-				}
+
 				event.stopPropagation();
 				if (canDelete()) {
 					beginNodePointer(data.id, event, "delete");
@@ -1321,7 +1322,7 @@ function updateControlsUi() {
 			controlsHint.textContent = "Delete mode is on. Click a skill or connection to remove it.";
 		} else if (editMode) {
 			controlsHint.textContent =
-				"Shift-click skills to multi-select. Drag any selected skill to move the group. Click empty space to add skills. Click two skills to connect. Drag to move, corner to resize. Right-click a skill to rename it. Double-click to change status.";
+				"Right-click and drag to select multiple skills. Drag any selected skill to move the group. Click empty space to add skills. Click two skills to connect. Drag to move, corner to resize. Right-click a skill to rename it. Double-click to change status.";
 		} else {
 			controlsHint.textContent = "Drag to pan. Click a skill to cycle its status. Turn on edit mode to add, move, connect, and resize.";
 		}
@@ -1612,8 +1613,72 @@ viewportFrame.addEventListener("pointerdown", (event) => {
 	beginPan(event);
 });
 
+// ── Selection rectangle (right-click + drag in edit mode) ────────
+viewportFrame.addEventListener("pointerdown", (event) => {
+	if (event.button !== 2 || !canEditStructure() || canDelete()) {
+		return;
+	}
+
+	if (event.target.closest(".skill-node, .skill-controls, .skill-detail-window, .skill-rename-dialog")) {
+		return;
+	}
+
+	const point = getCanvasPoint(event);
+
+	if (findNodeAtCanvasPoint(point.x, point.y)) {
+		return;
+	}
+
+	event.preventDefault();
+	event.stopPropagation();
+	viewportFrame.setPointerCapture(event.pointerId);
+
+	activeSelectionRect = {
+		pointerId: event.pointerId,
+		startX: point.x,
+		startY: point.y,
+		currentX: point.x,
+		currentY: point.y,
+	};
+
+	selectionRectEl.style.left = `${point.x}px`;
+	selectionRectEl.style.top = `${point.y}px`;
+	selectionRectEl.style.width = "0px";
+	selectionRectEl.style.height = "0px";
+	selectionRectEl.hidden = false;
+});
+
+viewportFrame.addEventListener("contextmenu", (event) => {
+	if (!canEditStructure()) {
+		return;
+	}
+
+	if (event.target.closest(".skill-node, .skill-controls, .skill-detail-window, .skill-rename-dialog")) {
+		return;
+	}
+
+	event.preventDefault();
+});
+
 viewportFrame.addEventListener("pointermove", (event) => {
 	if (camera.activePinch) {
+		return;
+	}
+
+	if (activeSelectionRect && activeSelectionRect.pointerId === event.pointerId) {
+		const point = getCanvasPoint(event);
+		activeSelectionRect.currentX = point.x;
+		activeSelectionRect.currentY = point.y;
+
+		const minX = Math.min(activeSelectionRect.startX, point.x);
+		const minY = Math.min(activeSelectionRect.startY, point.y);
+		const maxX = Math.max(activeSelectionRect.startX, point.x);
+		const maxY = Math.max(activeSelectionRect.startY, point.y);
+
+		selectionRectEl.style.left = `${minX}px`;
+		selectionRectEl.style.top = `${minY}px`;
+		selectionRectEl.style.width = `${maxX - minX}px`;
+		selectionRectEl.style.height = `${maxY - minY}px`;
 		return;
 	}
 
@@ -1703,8 +1768,54 @@ viewportFrame.addEventListener("pointermove", (event) => {
 	}
 });
 
-viewportFrame.addEventListener("pointerup", finishPointerInteraction);
-viewportFrame.addEventListener("pointercancel", finishPointerInteraction);
+function finishSelectionRect(event) {
+	if (!activeSelectionRect || activeSelectionRect.pointerId !== event.pointerId) {
+		return;
+	}
+
+	const minX = Math.min(activeSelectionRect.startX, activeSelectionRect.currentX);
+	const minY = Math.min(activeSelectionRect.startY, activeSelectionRect.currentY);
+	const maxX = Math.max(activeSelectionRect.startX, activeSelectionRect.currentX);
+	const maxY = Math.max(activeSelectionRect.startY, activeSelectionRect.currentY);
+
+	selectionRectEl.hidden = true;
+	activeSelectionRect = null;
+
+	if (viewportFrame.hasPointerCapture(event.pointerId)) {
+		viewportFrame.releasePointerCapture(event.pointerId);
+	}
+
+	const rectWidth = maxX - minX;
+	const rectHeight = maxY - minY;
+
+	if (rectWidth < interactionThreshold && rectHeight < interactionThreshold) {
+		return;
+	}
+
+	const nodes = normalizeNodes(latestNodesSource);
+	const hits = [];
+
+	for (const node of nodes) {
+		if (node.x >= minX && node.x <= maxX && node.y >= minY && node.y <= maxY) {
+			hits.push(node.id);
+		}
+	}
+
+	if (hits.length > 0) {
+		selectedNodes = hits;
+		firstSelectedNodeId = null;
+		renderSelection();
+	}
+}
+
+viewportFrame.addEventListener("pointerup", (event) => {
+	finishSelectionRect(event);
+	finishPointerInteraction(event);
+});
+viewportFrame.addEventListener("pointercancel", (event) => {
+	finishSelectionRect(event);
+	finishPointerInteraction(event);
+});
 
 viewportFrame.addEventListener(
 	"wheel",

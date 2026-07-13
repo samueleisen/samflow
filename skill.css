@@ -388,6 +388,15 @@ body.skill-page .content {
     transform: scale(1.02);
 }
 
+.skill-selection-rect {
+    position: absolute;
+    border: 1.5px solid rgba(77, 216, 255, 0.6);
+    background: rgba(77, 216, 255, 0.1);
+    pointer-events: none;
+    z-index: 5;
+    border-radius: 3px;
+}
+
 .skill-node__label {
     position: relative;
     z-index: 1;
