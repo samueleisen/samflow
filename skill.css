@@ -47,8 +47,19 @@ body.skill-page .content {
     cursor: grab;
 }
 
+.skill-rename-dialog,
+.skill-region-dialog,
+.skill-detail-window,
+.skill-node-desc {
+    user-select: text;
+}
+
 .skill-viewport.is-editing {
     cursor: crosshair;
+}
+
+.skill-viewport.has-active-popup {
+    cursor: default !important;
 }
 
 .skill-viewport.is-editing .skill-node::before {

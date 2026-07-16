@@ -839,6 +839,16 @@ function removeSelectedNode(nodeId) {
 	renderSelection();
 }
 
+function isPopupActive() {
+	return !renameDialog.hidden || !regionEditDialog.hidden || !detailWindow.hidden;
+}
+
+function updateViewportCursor() {
+	if (viewportFrame) {
+		viewportFrame.classList.toggle("has-active-popup", isPopupActive());
+	}
+}
+
 function closeRenameDialog() {
 	activeRenameNodeId = null;
 	renameDialog.hidden = true;
@@ -851,17 +861,20 @@ function closeRenameDialog() {
 	const existingEl = renameMediaPreview.querySelector("img, video");
 	if (existingEl) existingEl.remove();
 	renameMediaUploading.classList.remove("is-active");
+	updateViewportCursor();
 }
 
 function closeDetailWindow() {
 	detailWindow.hidden = true;
 	detailMedia.replaceChildren();
+	updateViewportCursor();
 }
 
 function closeRegionEditDialog() {
 	activeRegionEditId = null;
 	regionEditDialog.hidden = true;
 	interactionState.consumeClick = false;
+	updateViewportCursor();
 }
 
 function openRegionEditDialog(regionId) {
@@ -882,6 +895,7 @@ function openRegionEditDialog(regionId) {
 	regionEditDialog.hidden = false;
 	regionEditNameInput.focus();
 	regionEditNameInput.select();
+	updateViewportCursor();
 }
 
 function saveRegionEditDialog() {
@@ -963,6 +977,7 @@ function openDetailWindow(nodeId) {
 	}
 
 	detailWindow.hidden = false;
+	updateViewportCursor();
 }
 
 // ── Media upload handlers ─────────────────────────────────────────
@@ -1053,6 +1068,7 @@ function openRenameDialog(nodeId) {
 	renameDialog.dataset.open = "true";
 	renameInput.focus();
 	renameInput.select();
+	updateViewportCursor();
 }
 
 function saveRenameDialog() {
