@@ -1,6 +1,10 @@
 import { database, ref, set, onValue, push, remove } from "./firebase-config.js";
 import { subscribeAuthState } from "./auth.js";
 
+/**
+ * SkillSync handles realtime Firebase database synchronization for the Skill Tree
+ * (nodes, connections, and region overlays).
+ */
 export class SkillSync {
 	constructor(callbacks = {}) {
 		this.nodesRef = null;
@@ -19,11 +23,11 @@ export class SkillSync {
 		};
 	}
 
+	// ── Connection Lifecycle & Auth Listener ────────────────────────────
+
 	init() {
 		subscribeAuthState((state) => {
-			if (!state.ready) {
-				return;
-			}
+			if (!state.ready) return;
 
 			if (!state.user) {
 				this.connectForUser(null);
@@ -45,17 +49,9 @@ export class SkillSync {
 	}
 
 	disconnect() {
-		if (typeof this.nodesUnsubscribe === "function") {
-			this.nodesUnsubscribe();
-		}
-
-		if (typeof this.connectionsUnsubscribe === "function") {
-			this.connectionsUnsubscribe();
-		}
-
-		if (typeof this.regionsUnsubscribe === "function") {
-			this.regionsUnsubscribe();
-		}
+		if (typeof this.nodesUnsubscribe === "function") this.nodesUnsubscribe();
+		if (typeof this.connectionsUnsubscribe === "function") this.connectionsUnsubscribe();
+		if (typeof this.regionsUnsubscribe === "function") this.regionsUnsubscribe();
 
 		this.nodesUnsubscribe = null;
 		this.connectionsUnsubscribe = null;
@@ -96,65 +92,55 @@ export class SkillSync {
 		this.callbacks.onAuthStateChange(user);
 	}
 
+	// ── Node Operations ─────────────────────────────────────────────────
+
 	persistNode(node) {
-		if (!this.hasRemoteTreeSync()) {
-			return;
-		}
+		if (!this.hasRemoteTreeSync()) return;
 		set(ref(database, `users/${this.currentUserId}/skillTree/nodes/${node.id}`), node);
 	}
 
 	deleteNode(nodeId) {
-		if (!this.hasRemoteTreeSync()) {
-			return;
-		}
+		if (!this.hasRemoteTreeSync()) return;
 		remove(ref(database, `users/${this.currentUserId}/skillTree/nodes/${nodeId}`));
 	}
 
-	deleteConnection(connectionId) {
-		if (!this.hasRemoteTreeSync()) {
-			return;
-		}
-		remove(ref(database, `users/${this.currentUserId}/skillTree/connections/${connectionId}`));
-	}
-
-	persistRegion(region) {
-		if (!this.hasRemoteTreeSync()) {
-			return;
-		}
-		set(ref(database, `users/${this.currentUserId}/skillTree/regions/${region.id}`), region);
-	}
-
-	deleteRegion(regionId) {
-		if (!this.hasRemoteTreeSync()) {
-			return;
-		}
-		remove(ref(database, `users/${this.currentUserId}/skillTree/regions/${regionId}`));
-	}
-
 	pushNewNode(nodeData) {
-		if (!this.hasRemoteTreeSync()) {
-			return null;
-		}
+		if (!this.hasRemoteTreeSync()) return null;
 		const nodeRef = push(this.nodesRef);
 		const node = { ...nodeData, id: nodeRef.key };
 		set(nodeRef, node);
 		return node;
 	}
 
+	// ── Connection Operations ───────────────────────────────────────────
+
+	deleteConnection(connectionId) {
+		if (!this.hasRemoteTreeSync()) return;
+		remove(ref(database, `users/${this.currentUserId}/skillTree/connections/${connectionId}`));
+	}
+
 	pushNewConnection(connectionData) {
-		if (!this.hasRemoteTreeSync()) {
-			return null;
-		}
+		if (!this.hasRemoteTreeSync()) return null;
 		const connectionRef = push(this.connectionsRef);
 		const connection = { ...connectionData, id: connectionRef.key };
 		set(connectionRef, connection);
 		return connection;
 	}
 
+	// ── Region Operations ───────────────────────────────────────────────
+
+	persistRegion(region) {
+		if (!this.hasRemoteTreeSync()) return;
+		set(ref(database, `users/${this.currentUserId}/skillTree/regions/${region.id}`), region);
+	}
+
+	deleteRegion(regionId) {
+		if (!this.hasRemoteTreeSync()) return;
+		remove(ref(database, `users/${this.currentUserId}/skillTree/regions/${regionId}`));
+	}
+
 	pushNewRegion(regionData) {
-		if (!this.hasRemoteTreeSync()) {
-			return null;
-		}
+		if (!this.hasRemoteTreeSync()) return null;
 		const regionRef = push(this.regionsRef);
 		const region = { ...regionData, id: regionRef.key };
 		set(regionRef, region);
@@ -162,9 +148,7 @@ export class SkillSync {
 	}
 
 	setTreeData(nodes, connections, regions) {
-		if (!this.hasRemoteTreeSync()) {
-			return;
-		}
+		if (!this.hasRemoteTreeSync()) return;
 		set(this.nodesRef, nodes);
 		set(this.connectionsRef, connections);
 		set(this.regionsRef, regions);
