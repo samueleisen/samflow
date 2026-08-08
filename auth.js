@@ -1,11 +1,13 @@
 import { auth, googleProvider, onAuthStateChanged, signInWithPopup, signOut } from "./firebase-config.js";
 
+// ── Auth Store & Subscriber State ─────────────────────────────────
 let currentUser = null;
 let authReady = false;
 let authErrorMessage = "";
 const subscribers = new Set();
 const errorSubscribers = new Set();
 
+// ── State Emitters ──────────────────────────────────────────────────
 function emitAuthState() {
   const snapshot = {
     ready: authReady,
@@ -28,12 +30,15 @@ function emitAuthError(errorMessage) {
   emitAuthState();
 }
 
+// ── Firebase Auth Observer ──────────────────────────────────────────
 onAuthStateChanged(auth, (user) => {
   currentUser = user;
   authReady = true;
   authErrorMessage = "";
   emitAuthState();
 });
+
+// ── Public Auth Subscriptions & Actions ─────────────────────────────
 
 function getAuthState() {
   return {

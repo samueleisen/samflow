@@ -3,31 +3,32 @@ export class ViewportCamera {
 		this.viewportFrame = viewportFrame;
 		this.canvas = canvas;
 
-		// Constants / Config
-		this.canvasSize = options.canvasSize ?? 4000;
+		// ── Configuration Constants ─────────────────────────────────────
+		this.canvasWidth = options.canvasWidth ?? options.canvasSize ?? 5000;
+		this.canvasHeight = options.canvasHeight ?? options.canvasSize ?? 3000;
 		this.minZoom = options.minZoom ?? 0.25;
 		this.maxZoom = options.maxZoom ?? 2.5;
 		this.defaultZoom = options.defaultZoom ?? 0.5;
 		this.wheelZoomIntensity = options.wheelZoomIntensity ?? 0.0015;
 		this.interactionThreshold = options.interactionThreshold ?? 4;
 
-		// State
+		// ── Camera State ────────────────────────────────────────────────
 		this.panX = 0;
 		this.panY = 0;
 		this.zoom = this.defaultZoom;
+		this.currentGridSize = 20;
 		this.viewportBounds = viewportFrame.getBoundingClientRect();
 		this.activePan = null;
 		this.activePinch = null;
 	}
 
-	clampPan(nextX, nextY) {
-		const scaledWidth = this.canvasSize * this.zoom;
-		const scaledHeight = this.canvasSize * this.zoom;
+	// ── Coordinate Bounds & Transform Application ───────────────────────
 
-		let minX;
-		let maxX;
-		let minY;
-		let maxY;
+	clampPan(nextX, nextY) {
+		const scaledWidth = this.canvasWidth * this.zoom;
+		const scaledHeight = this.canvasHeight * this.zoom;
+
+		let minX, maxX, minY, maxY;
 
 		if (scaledWidth <= this.viewportBounds.width) {
 			const centeredX = (this.viewportBounds.width - scaledWidth) / 2;
@@ -55,6 +56,23 @@ export class ViewportCamera {
 
 	updateCanvasTransform() {
 		this.canvas.style.transform = `translate3d(${this.panX}px, ${this.panY}px, 0) scale(${this.zoom})`;
+
+		let gridSize = 20;
+		if (this.zoom < 0.35) {
+			gridSize = 80;
+		} else if (this.zoom < 0.70) {
+			gridSize = 40;
+		}
+
+		// Keep dot size consistent on screen (~1.5px) by scaling inversely with zoom
+		const dotSize = Math.max(1, Number((1.5 / this.zoom).toFixed(2)));
+
+		if (this.currentGridSize !== gridSize) {
+			this.currentGridSize = gridSize;
+			this.canvas.style.setProperty("--grid-size", `${gridSize}px`);
+		}
+
+		this.canvas.style.setProperty("--dot-size", `${dotSize}px`);
 	}
 
 	clampAndApply() {
@@ -63,6 +81,8 @@ export class ViewportCamera {
 		this.panY = clamped.y;
 		this.updateCanvasTransform();
 	}
+
+	// ── Zoom & Center Helpers ───────────────────────────────────────────
 
 	setZoomAtViewportPoint(viewportX, viewportY, nextZoom) {
 		const clampedZoom = Math.max(this.minZoom, Math.min(this.maxZoom, nextZoom));
@@ -77,9 +97,8 @@ export class ViewportCamera {
 	}
 
 	centerCanvasView() {
-		const canvasCenter = this.canvasSize / 2;
-		this.panX = this.viewportBounds.width / 2 - canvasCenter * this.zoom;
-		this.panY = this.viewportBounds.height / 2 - canvasCenter * this.zoom;
+		this.panX = this.viewportBounds.width / 2 - (this.canvasWidth / 2) * this.zoom;
+		this.panY = this.viewportBounds.height / 2 - (this.canvasHeight / 2) * this.zoom;
 		this.clampAndApply();
 	}
 
@@ -90,10 +109,12 @@ export class ViewportCamera {
 
 	getCanvasPoint(clientX, clientY) {
 		return {
-			x: Math.max(0, Math.min(this.canvasSize, (clientX - this.viewportBounds.left - this.panX) / this.zoom)),
-			y: Math.max(0, Math.min(this.canvasSize, (clientY - this.viewportBounds.top - this.panY) / this.zoom)),
+			x: Math.max(0, Math.min(this.canvasWidth, (clientX - this.viewportBounds.left - this.panX) / this.zoom)),
+			y: Math.max(0, Math.min(this.canvasHeight, (clientY - this.viewportBounds.top - this.panY) / this.zoom)),
 		};
 	}
+
+	// ── Gesture Math & Pointer Events ───────────────────────────────────
 
 	getTouchPairDistance(firstTouch, secondTouch) {
 		return Math.hypot(secondTouch.clientX - firstTouch.clientX, secondTouch.clientY - firstTouch.clientY);

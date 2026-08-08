@@ -1,11 +1,11 @@
-
 import { signInWithGoogle, signOutUser, subscribeAuthError, subscribeAuthState } from "./auth.js";
 
 (function () {
+	// ── Route & Environment Setup ──────────────────────────────────────
 	const pageRoutes = {
-	index: "/",
-	work: "/work/",
-	time: "/time/",
+		index: "/",
+		work: "/work/",
+		time: "/time/",
 	};
 
 	const pageOrder = ["time", "index", "work"];
@@ -16,52 +16,44 @@ import { signInWithGoogle, signOutUser, subscribeAuthError, subscribeAuthState }
 	const desktopQuery = window.matchMedia("(min-width: 920px)");
 	const DOUBLE_TAP_MS = 320;
 	const DOUBLE_TAP_DISTANCE_PX = 24;
+	const DOUBLE_TAP_DISTANCE_SQ = DOUBLE_TAP_DISTANCE_PX * DOUBLE_TAP_DISTANCE_PX;
 	const TAP_MOVE_THRESHOLD_PX = 12;
+	const TAP_MOVE_THRESHOLD_SQ = TAP_MOVE_THRESHOLD_PX * TAP_MOVE_THRESHOLD_PX;
 
+	/**
+	 * Resolves active page key from body data attribute or URL pathname.
+	 */
 	function resolvePageKey(key, pathname) {
-		if (key === "skill") {
-			return "index";
-		}
-
-		if (pathname.startsWith("/work")) {
-			return "work";
-		}
-
-		if (pathname.startsWith("/time")) {
-			return "time";
-		}
-
-		if (key && pageRoutes[key]) {
-			return key;
-		}
-
-		if (pathname === "/" || pathname.endsWith("/index.html")) {
-			return "index";
-		}
-
+		if (key === "skill") return "index";
+		if (pathname.startsWith("/work")) return "work";
+		if (pathname.startsWith("/time")) return "time";
+		if (key && pageRoutes[key]) return key;
+		if (pathname === "/" || pathname.endsWith("/index.html")) return "index";
 		return null;
 	}
 
 	const pageKey = resolvePageKey(rawPageKey, pagePath);
+	if (!pageKey || !pageRoutes[pageKey]) return;
 
-	if (!pageKey || !pageRoutes[pageKey]) {
-		return;
-	}
-
+	// Global controller & auth state
 	let gestureCleanup = null;
 	let skillTapCleanup = null;
 	let arrowRoot = null;
 	let swipeStatusDot = null;
 	let skillSwipeNavLocked = false;
+
 	let authRoot = null;
 	let authButton = null;
 	let authDetail = null;
+	let authUnsubscribers = [];
 	let authState = {
 		ready: false,
 		user: null,
 		errorMessage: "",
 	};
 	let authBusy = false;
+
+	// ── Swipe Lock State & Storage ──────────────────────────────────────
 
 	function readSkillSwipeLock() {
 		try {
@@ -75,15 +67,12 @@ import { signInWithGoogle, signOutUser, subscribeAuthError, subscribeAuthState }
 		try {
 			localStorage.setItem(swipeLockKey, locked ? "true" : "false");
 		} catch {
-			// Ignore storage failures; in-memory toggle still works this session.
+			// Storage failure fallback: state remains in memory for active session
 		}
 	}
 
 	function shouldMountSwipeGesture() {
-		if (pageKey !== "index") {
-			return true;
-		}
-
+		if (pageKey !== "index") return true;
 		return !skillSwipeNavLocked;
 	}
 
@@ -94,10 +83,10 @@ import { signInWithGoogle, signOutUser, subscribeAuthError, subscribeAuthState }
 		applyNavigationMode();
 	}
 
+	// ── Swipe Status Indicator UI ───────────────────────────────────────
+
 	function updateSwipeStatusIndicator() {
-		if (!swipeStatusDot) {
-			return;
-		}
+		if (!swipeStatusDot) return;
 
 		const swipeEnabled = !skillSwipeNavLocked;
 		swipeStatusDot.classList.toggle("is-unlocked", swipeEnabled);
@@ -117,9 +106,7 @@ import { signInWithGoogle, signOutUser, subscribeAuthError, subscribeAuthState }
 			swipeStatusDot = null;
 		}
 
-		if (pageKey !== "index" || desktopQuery.matches) {
-			return;
-		}
+		if (pageKey !== "index" || desktopQuery.matches) return;
 
 		swipeStatusDot = document.createElement("div");
 		swipeStatusDot.className = "swipe-nav-status";
@@ -129,26 +116,17 @@ import { signInWithGoogle, signOutUser, subscribeAuthError, subscribeAuthState }
 		updateSwipeStatusIndicator();
 	}
 
+	// ── Google Auth Controls UI ──────────────────────────────────────────
+
 	function getAuthLabel() {
-		if (authState.errorMessage) {
-			return authState.errorMessage;
-		}
-
-		if (!authState.ready) {
-			return "Connecting to Google";
-		}
-
-		if (!authState.user) {
-			return "Sign in to sync your workspace";
-		}
-
+		if (authState.errorMessage) return authState.errorMessage;
+		if (!authState.ready) return "Connecting to Google";
+		if (!authState.user) return "Sign in to sync your workspace";
 		return authState.user.displayName || authState.user.email || "Google account";
 	}
 
 	function updateAuthControls() {
-		if (!authRoot || !authButton || !authDetail) {
-			return;
-		}
+		if (!authRoot || !authButton || !authDetail) return;
 
 		authRoot.classList.toggle("is-authenticated", Boolean(authState.user));
 		authRoot.classList.toggle("is-loading", !authState.ready);
@@ -164,6 +142,10 @@ import { signInWithGoogle, signOutUser, subscribeAuthError, subscribeAuthState }
 		if (authRoot) {
 			authRoot.remove();
 		}
+
+		// Clean up existing auth listeners to avoid duplicate subscriptions
+		authUnsubscribers.forEach((unsubscribe) => unsubscribe());
+		authUnsubscribers = [];
 
 		authRoot = document.createElement("div");
 		authRoot.className = "auth-shell";
@@ -187,9 +169,7 @@ import { signInWithGoogle, signOutUser, subscribeAuthError, subscribeAuthState }
 		authButton.type = "button";
 		authButton.className = "auth-chip__button";
 		authButton.addEventListener("click", async () => {
-			if (authBusy || !authState.ready) {
-				return;
-			}
+			if (authBusy || !authState.ready) return;
 
 			authBusy = true;
 			updateAuthControls();
@@ -212,16 +192,19 @@ import { signInWithGoogle, signOutUser, subscribeAuthError, subscribeAuthState }
 		authRoot.appendChild(panel);
 		body.appendChild(authRoot);
 
-		subscribeAuthState((state) => {
-			authState = state;
-			updateAuthControls();
-		});
-
-		subscribeAuthError((message) => {
-			authState.errorMessage = message;
-			updateAuthControls();
-		});
+		authUnsubscribers.push(
+			subscribeAuthState((state) => {
+				authState = state;
+				updateAuthControls();
+			}),
+			subscribeAuthError((message) => {
+				authState.errorMessage = message;
+				updateAuthControls();
+			})
+		);
 	}
+
+	// ── Target & Gesture Filtering ─────────────────────────────────────
 
 	function isEditableTarget(target) {
 		return (
@@ -231,13 +214,8 @@ import { signInWithGoogle, signOutUser, subscribeAuthError, subscribeAuthState }
 	}
 
 	function isEmptySkillTapTarget(target) {
-		if (!(target instanceof Element)) {
-			return false;
-		}
-
-		if (isEditableTarget(target)) {
-			return false;
-		}
+		if (!(target instanceof Element)) return false;
+		if (isEditableTarget(target)) return false;
 
 		if (target.closest(".skill-node, .skill-connection, .page-nav-arrow, .swipe-nav-status")) {
 			return false;
@@ -245,6 +223,8 @@ import { signInWithGoogle, signOutUser, subscribeAuthError, subscribeAuthState }
 
 		return Boolean(target.closest("#viewport-frame, .skill-viewport, .skill-canvas, .skill-stage, .skill-shell"));
 	}
+
+	// ── Double Tap Gesture Listener ────────────────────────────────────
 
 	function mountSkillDoubleTapToggle() {
 		let lastTapTime = 0;
@@ -279,15 +259,13 @@ import { signInWithGoogle, signOutUser, subscribeAuthError, subscribeAuthState }
 		body.addEventListener(
 			"touchmove",
 			(event) => {
-				if (!trackingEmptyTouch || event.touches.length !== 1 || touchMoved) {
-					return;
-				}
+				if (!trackingEmptyTouch || event.touches.length !== 1 || touchMoved) return;
 
 				const touch = event.touches[0];
 				const deltaX = touch.clientX - touchStartX;
 				const deltaY = touch.clientY - touchStartY;
 
-				if (Math.hypot(deltaX, deltaY) > TAP_MOVE_THRESHOLD_PX) {
+				if (deltaX * deltaX + deltaY * deltaY > TAP_MOVE_THRESHOLD_SQ) {
 					touchMoved = true;
 				}
 			},
@@ -315,9 +293,9 @@ import { signInWithGoogle, signOutUser, subscribeAuthError, subscribeAuthState }
 
 				trackingEmptyTouch = false;
 
-				if (elapsed < DOUBLE_TAP_MS && Math.hypot(deltaX, deltaY) < DOUBLE_TAP_DISTANCE_PX) {
+				if (elapsed < DOUBLE_TAP_MS && (deltaX * deltaX + deltaY * deltaY < DOUBLE_TAP_DISTANCE_SQ)) {
 					lastTapTime = 0;
-					toggleSkillSwipeLock();
+					queueMicrotask(() => toggleSkillSwipeLock());
 					return;
 				}
 
@@ -340,6 +318,8 @@ import { signInWithGoogle, signOutUser, subscribeAuthError, subscribeAuthState }
 		return () => controller.abort();
 	}
 
+	// ── Page Navigation & Desktop Controls ──────────────────────────────
+
 	function getNeighbor(delta) {
 		const currentIndex = pageOrder.indexOf(pageKey);
 		const nextKey = pageOrder[currentIndex + delta];
@@ -349,11 +329,7 @@ import { signInWithGoogle, signOutUser, subscribeAuthError, subscribeAuthState }
 	function navigate(delta) {
 		const currentIndex = pageOrder.indexOf(pageKey);
 		const nextKey = pageOrder[currentIndex + delta];
-
-		if (!nextKey) {
-			return;
-		}
-
+		if (!nextKey) return;
 		window.location.href = pageRoutes[nextKey];
 	}
 
@@ -388,6 +364,8 @@ import { signInWithGoogle, signOutUser, subscribeAuthError, subscribeAuthState }
 		body.appendChild(root);
 		arrowRoot = root;
 	}
+
+	// ── Mobile Swipe Gesture Listener ───────────────────────────────────
 
 	function mountSwipeGesture() {
 		let startX = 0;
@@ -430,13 +408,8 @@ import { signInWithGoogle, signOutUser, subscribeAuthError, subscribeAuthState }
 
 				tracking = false;
 
-				if (duration > 500) {
-					return;
-				}
-
-				if (Math.abs(deltaX) < 56 || Math.abs(deltaX) <= Math.abs(deltaY) * 1.35) {
-					return;
-				}
+				if (duration > 500) return;
+				if (Math.abs(deltaX) < 56 || Math.abs(deltaX) <= Math.abs(deltaY) * 1.35) return;
 
 				if (deltaX > 0) {
 					navigate(-1);
@@ -449,6 +422,8 @@ import { signInWithGoogle, signOutUser, subscribeAuthError, subscribeAuthState }
 
 		return () => controller.abort();
 	}
+
+	// ── Navigation Controller & Lifecycle ──────────────────────────────
 
 	function applyNavigationMode() {
 		if (gestureCleanup) {
@@ -482,6 +457,8 @@ import { signInWithGoogle, signOutUser, subscribeAuthError, subscribeAuthState }
 		}
 	}
 
+	// ── Initialization ──────────────────────────────────────────────────
+
 	if (pageKey === "index") {
 		skillSwipeNavLocked = readSkillSwipeLock();
 	}
@@ -489,6 +466,7 @@ import { signInWithGoogle, signOutUser, subscribeAuthError, subscribeAuthState }
 	if (pageKey === "time") {
 		mountAuthControls();
 	}
+
 	applyNavigationMode();
 	desktopQuery.addEventListener("change", applyNavigationMode);
 })();
